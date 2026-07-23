@@ -1,4 +1,9 @@
-"""TCP JSON client for the vendored BlenderMCP addon protocol."""
+"""TCP JSON client for the vendored BlenderMCP addon protocol.
+
+Deliberately unauthenticated in v1: the stock ``uvx blender-mcp`` server
+speaks this plain protocol, and the PRD accepts open code execution behind
+the loopback boundary. See docs/compat.md ("Security posture").
+"""
 
 from __future__ import annotations
 
