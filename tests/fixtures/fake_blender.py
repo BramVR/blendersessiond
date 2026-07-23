@@ -2,11 +2,66 @@
 
 from __future__ import annotations
 
+import json
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
+
+
+def _serve_fake_addon(port: int) -> None:
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", port))
+    server.listen(1)
+    while True:
+        client, _address = server.accept()
+        with client:
+            buffer = b""
+            while True:
+                chunk = client.recv(8192)
+                if not chunk:
+                    break
+                buffer += chunk
+                try:
+                    command = json.loads(buffer.decode("utf-8"))
+                except json.JSONDecodeError:
+                    continue
+                command_type = command.get("type")
+                params = command.get("params", {})
+                if command_type == "get_polyhaven_status":
+                    result = {"enabled": False}
+                elif command_type == "get_scene_info":
+                    result = {
+                        "name": "Scene",
+                        "object_count": 3,
+                        "objects": [],
+                        "materials_count": 0,
+                    }
+                elif command_type == "get_object_info":
+                    result = {
+                        "name": params.get("name"),
+                        "type": "MESH",
+                    }
+                else:
+                    client.sendall(
+                        json.dumps(
+                            {
+                                "status": "error",
+                                "message": f"Unknown command type: {command_type}",
+                            }
+                        ).encode("utf-8")
+                    )
+                    break
+                client.sendall(
+                    json.dumps(
+                        {"status": "success", "result": result}
+                    ).encode("utf-8")
+                )
+                break
 
 
 def main() -> int:
@@ -16,6 +71,15 @@ def main() -> int:
     if "--fake-child" in sys.argv:
         while True:
             time.sleep(1)
+
+    if os.environ.get("FAKE_BLENDER_DISABLE_MCP_SOCKET") != "1":
+        port = int(os.environ["BLENDERSESSIOND_MCP_PORT"])
+        addon_thread = threading.Thread(
+            target=_serve_fake_addon,
+            args=(port,),
+            daemon=True,
+        )
+        addon_thread.start()
 
     child = subprocess.Popen(
         [sys.executable, __file__, "--fake-child"],

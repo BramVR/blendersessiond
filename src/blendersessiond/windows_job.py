@@ -65,11 +65,17 @@ class _BasicAccountingInformation(ctypes.Structure):
 
 
 def main() -> int:
-    if len(sys.argv) == 7 and sys.argv[1] == "--child":
+    if len(sys.argv) == 8 and sys.argv[1] == "--child":
         return _launch_child(*sys.argv[2:])
-    if os.name != "nt" or len(sys.argv) != 5:
+    if os.name != "nt" or len(sys.argv) != 6:
         return 2
-    executable, stdout_name, stderr_name, bootstrap_name = sys.argv[1:]
+    (
+        executable,
+        stdout_name,
+        stderr_name,
+        bootstrap_name,
+        addon_bootstrap_name,
+    ) = sys.argv[1:]
     bootstrap = Path(bootstrap_name)
     gate = bootstrap.with_suffix(".gate")
     ready = bootstrap.with_suffix(".ready")
@@ -89,6 +95,7 @@ def main() -> int:
                 stderr_name,
                 bootstrap_name,
                 str(gate),
+                addon_bootstrap_name,
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -128,6 +135,7 @@ def _launch_child(
     stderr_name: str,
     bootstrap_name: str,
     gate_name: str,
+    addon_bootstrap_name: str,
 ) -> int:
     bootstrap = Path(bootstrap_name)
     try:
@@ -141,7 +149,12 @@ def _launch_child(
             stderr_name
         ).open("ab", buffering=0) as stderr:
             process = subprocess.Popen(
-                [executable, "--factory-startup"],
+                [
+                    executable,
+                    "--factory-startup",
+                    "--python",
+                    addon_bootstrap_name,
+                ],
                 stdin=subprocess.DEVNULL,
                 stdout=stdout,
                 stderr=stderr,

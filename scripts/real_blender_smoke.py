@@ -84,6 +84,20 @@ def main() -> int:
             "healthy Session pid is not the selected Blender executable",
         )
 
+        scene = _run_cli(
+            "call",
+            "get_scene_info",
+            "--name",
+            args.name,
+            environment=environment,
+            expected_codes={0},
+            versioned=False,
+        )
+        _require(
+            {"name", "object_count", "objects", "materials_count"} <= scene.keys(),
+            "get_scene_info did not return the expected real scene keys",
+        )
+
         stopped = _run_cli(
             "stop",
             "--name",
@@ -120,7 +134,10 @@ def main() -> int:
         _print_log_tails(session_logs, state_dir)
         return 1
 
-    print("PASS: real Blender Session start, Health, stop, and Ownership verified.")
+    print(
+        "PASS: real Blender Session start, socket Health, call get_scene_info, "
+        "stop, and Ownership verified."
+    )
     return 0
 
 
@@ -138,6 +155,7 @@ def _run_cli(
     *arguments: str,
     environment: dict[str, str],
     expected_codes: set[int],
+    versioned: bool = True,
 ) -> dict[str, Any]:
     command = ["blendersessiond", *arguments]
     print(f"$ {shlex.join(command)}")
@@ -164,7 +182,7 @@ def _run_cli(
         raise SmokeFailure(f"CLI stdout was not JSON: {completed.stdout!r}") from error
     if not isinstance(payload, dict):
         raise SmokeFailure("CLI JSON payload is not an object")
-    if payload.get("schema_version") != 1:
+    if versioned and payload.get("schema_version") != 1:
         raise SmokeFailure("CLI JSON schema_version is not 1")
     if completed.returncode not in expected_codes:
         raise SmokeFailure(
@@ -193,12 +211,15 @@ def _wait_for_health(
         session = _dict_field(last_payload, "session")
         health = _dict_field(session, "health")
         process = _dict_field(health, "process")
+        socket_health = _dict_field(health, "socket")
         if (
             last_payload.get("status") == "healthy"
             and session.get("status") == "healthy"
             and health.get("status") == "healthy"
             and process.get("status") == "healthy"
             and process.get("alive") is True
+            and socket_health.get("status") == "healthy"
+            and socket_health.get("answered") is True
         ):
             return last_payload
         time.sleep(1)

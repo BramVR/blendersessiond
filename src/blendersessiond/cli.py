@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 from typing import Any
 
@@ -12,12 +13,14 @@ from blendersessiond.sessions import (
     DEFAULT_SESSION_NAME,
     AlreadyRunningError,
     SessionError,
+    call_session,
     inspect_all_sessions,
     inspect_session,
     start_session,
     stop_session,
     validate_session_name,
 )
+from blendersessiond.wire import WireError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,6 +73,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_name_argument(stop)
     _add_json_argument(stop)
+
+    call = commands.add_parser(
+        "call",
+        help="Call one raw command on a Session's MCP addon.",
+    )
+    call.add_argument("addon_command", metavar="COMMAND")
+    _add_name_argument(call)
+    call.add_argument(
+        "--params",
+        default={},
+        type=_json_object,
+        metavar="JSON",
+        help="Command parameters as a JSON object (default: {}).",
+    )
+    _add_json_argument(call)
     return parser
 
 
@@ -176,6 +194,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_result(payload, as_json=args.json)
         return 0 if result.stopped else 1
 
+    if args.command == "call":
+        try:
+            result = call_session(
+                args.addon_command,
+                params=args.params,
+                name=args.name,
+            )
+        except (SessionError, WireError, OSError, RuntimeError, ValueError) as error:
+            if args.json:
+                _print_failure(command="call", message=str(error), as_json=True)
+            else:
+                print(f"ERROR: {error}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2))
+        return 0
+
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -213,6 +247,16 @@ def _session_name(value: str) -> str:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
+def _json_object(value: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise argparse.ArgumentTypeError(f"invalid JSON: {error.msg}") from error
+    if not isinstance(parsed, dict):
+        raise argparse.ArgumentTypeError("--params must be a JSON object")
+    return parsed
+
+
 def _print_result(payload: dict[str, Any], *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(payload, indent=2))
@@ -243,6 +287,21 @@ def _print_session(session: dict[str, Any]) -> None:
     if isinstance(logs, dict):
         print(f"  stdout log: {logs.get('stdout')}")
         print(f"  stderr log: {logs.get('stderr')}")
+    health = session.get("health")
+    if isinstance(health, dict):
+        process = health.get("process")
+        socket_health = health.get("socket")
+        if isinstance(process, dict) and isinstance(socket_health, dict):
+            print(
+                f"  Health: process={process.get('status')} "
+                f"socket={socket_health.get('status')}"
+            )
+            socket_message = socket_health.get("message")
+            if (
+                socket_health.get("status") != "healthy"
+                and isinstance(socket_message, str)
+            ):
+                print(f"  socket: {socket_message}")
 
 
 def _print_failure(*, command: str, message: str, as_json: bool) -> None:

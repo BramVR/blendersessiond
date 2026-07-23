@@ -12,11 +12,12 @@ from pathlib import Path
 
 
 def main() -> int:
-    if os.name == "nt" or len(sys.argv) != 4:
+    if os.name == "nt" or len(sys.argv) != 5:
         return 2
     gate = Path(sys.argv[1])
     executable = sys.argv[2]
     bootstrap = Path(sys.argv[3])
+    addon_bootstrap = Path(sys.argv[4])
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if gate.exists():
@@ -30,7 +31,12 @@ def main() -> int:
                 return 1
             try:
                 process = subprocess.Popen(
-                    [executable, "--factory-startup"],
+                    [
+                        executable,
+                        "--factory-startup",
+                        "--python",
+                        str(addon_bootstrap),
+                    ],
                     stdin=subprocess.DEVNULL,
                     close_fds=True,
                 )

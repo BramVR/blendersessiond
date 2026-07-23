@@ -63,6 +63,7 @@ def test_json_report_has_stable_shape(monkeypatch, capsys) -> None:
             "source": "PATH",
         },
         "state_dir": "/tmp/state/blendersessiond",
+        "sessions": [],
     }
 
 
