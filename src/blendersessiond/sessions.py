@@ -265,7 +265,9 @@ def inspect_all_sessions(
                 )
             )
             continue
-        results.append(inspect_session(name=name, state_root=root))
+        inspection = inspect_session(name=name, state_root=root)
+        if inspection.status != "not-found":
+            results.append(inspection)
     return results
 
 

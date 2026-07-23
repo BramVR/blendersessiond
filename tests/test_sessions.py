@@ -10,6 +10,7 @@ from blendersessiond.processes import process_start_time
 from blendersessiond.sessions import (
     SessionError,
     SessionRecord,
+    inspect_all_sessions,
     inspect_session,
     session_directory,
     start_session,
@@ -37,6 +38,28 @@ def test_state_components_are_portable_and_case_distinct(tmp_path: Path) -> None
     assert upper.name == "CON".encode("ascii").hex()
     assert lower.name == "con".encode("ascii").hex()
     assert upper.name.isalnum()
+
+
+def test_listing_drops_session_removed_before_locked_inspection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = session_directory(tmp_path, "stopped")
+    directory.mkdir(parents=True)
+    record_path = directory / "session.json"
+    record_path.write_text("{}", encoding="utf-8")
+    original_inspect = inspect_session
+
+    def remove_then_inspect(**kwargs) -> object:
+        record_path.unlink()
+        return original_inspect(**kwargs)
+
+    monkeypatch.setattr(
+        "blendersessiond.sessions.inspect_session",
+        remove_then_inspect,
+    )
+
+    assert inspect_all_sessions(state_root=tmp_path) == []
 
 
 def test_start_time_mismatch_is_stale_even_for_a_live_pid(tmp_path: Path) -> None:

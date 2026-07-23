@@ -45,7 +45,11 @@ def isolated_cli(tmp_path: Path) -> Iterator[tuple[dict[str, str], object]]:
 
     sessions_root = state_root / "sessions"
     if sessions_root.is_dir():
-        for record_path in sessions_root.glob("*/session.json"):
+        record_paths = (
+            *sessions_root.glob("*/session.json"),
+            *sessions_root.glob("*/launching.json"),
+        )
+        for record_path in record_paths:
             try:
                 payload = json.loads(record_path.read_text(encoding="utf-8"))
                 pid = payload["pid"]
