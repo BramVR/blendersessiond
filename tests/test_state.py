@@ -48,6 +48,14 @@ def test_environment_state_directories_are_honored(tmp_path: Path) -> None:
     ) == windows_base / "blendersessiond"
 
 
+def test_relative_xdg_state_home_falls_back_to_default(tmp_path: Path) -> None:
+    assert resolve_state_directory(
+        system="Linux",
+        environ={"XDG_STATE_HOME": "relative/state"},
+        home=tmp_path,
+    ) == tmp_path / ".local" / "state" / "blendersessiond"
+
+
 def test_state_directory_writability_probe(tmp_path: Path) -> None:
     state_path = tmp_path / "state"
 

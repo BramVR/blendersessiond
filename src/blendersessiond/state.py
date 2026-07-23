@@ -40,9 +40,10 @@ def resolve_state_directory(
         )
     else:
         xdg_state_home = environment.get("XDG_STATE_HOME")
+        xdg_state_path = Path(xdg_state_home) if xdg_state_home else None
         base = (
-            Path(xdg_state_home)
-            if xdg_state_home
+            xdg_state_path
+            if xdg_state_path is not None and xdg_state_path.is_absolute()
             else user_home / ".local" / "state"
         )
 
