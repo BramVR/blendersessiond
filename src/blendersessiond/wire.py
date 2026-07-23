@@ -114,7 +114,14 @@ def call_addon(
         raise WireProtocolError(
             "Addon response has no recognized success or error status."
         )
-    return response.get("result")
+    result = response.get("result")
+    # Many upstream handlers report failures as {"error": ...} results that
+    # the addon dispatcher still wraps in a success envelope.
+    if isinstance(result, dict):
+        error_message = result.get("error")
+        if isinstance(error_message, str) and error_message:
+            raise AddonError(error_message)
+    return result
 
 
 def probe_addon(port: int, *, attempts: int = 2) -> HealthProbe:

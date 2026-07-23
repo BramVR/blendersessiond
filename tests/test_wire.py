@@ -112,3 +112,12 @@ def test_addon_error_payload() -> None:
     with scripted_addon(response) as (port, _requests):
         with pytest.raises(AddonError, match="Object not found: Missing"):
             call_addon(port, "get_object_info", {"name": "Missing"})
+
+
+def test_error_shaped_success_result_is_a_command_failure() -> None:
+    response = json.dumps(
+        {"status": "success", "result": {"error": "No filepath provided"}}
+    ).encode("utf-8")
+    with scripted_addon(response) as (port, _requests):
+        with pytest.raises(AddonError, match="No filepath provided"):
+            call_addon(port, "get_viewport_screenshot")
