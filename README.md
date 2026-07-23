@@ -73,6 +73,9 @@ isolate their state, and always stop Sessions they started:
 BLENDERSESSIOND_REAL_E2E=1 uv run pytest -m real_blender
 ```
 
+Real-Blender lifecycle behavior is CI-gated by the required Ubuntu leg in
+`.github/workflows/real-blender-smoke.yml`.
+
 - Ubiquitous language: [CONTEXT.md](CONTEXT.md)
 - Decisions: [docs/adr/](docs/adr/)
 - v1 scope and plan: [PRD issue #1](https://github.com/BramVR/blendersessiond/issues/1)

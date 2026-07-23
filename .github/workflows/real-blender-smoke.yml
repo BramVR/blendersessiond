@@ -1,0 +1,179 @@
+name: Real Blender smoke
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Bump: select the newest stable LTS patch on blender.org, update every URL
+  # and SHA-256 below from its official checksum file, then require Ubuntu green.
+  BLENDER_VERSION: "5.2.0"
+
+jobs:
+  real-blender:
+    name: Real Blender / ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    # GUI startup on hosted macOS/Windows runners is flaky by nature; those
+    # legs are best-effort while Ubuntu remains the required proof gate.
+    continue-on-error: ${{ matrix.best_effort }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Ubuntu (required)
+            os: ubuntu-latest
+            best_effort: false
+            download_url: https://download.blender.org/release/Blender5.2/blender-5.2.0-linux-x64.tar.xz
+            sha256: 96f6c181a30f4950607839dc84d42a354b250d8a0231b098b59b7bc69c351c48
+          - label: macOS (best effort)
+            os: macos-latest
+            best_effort: true
+            download_url: https://download.blender.org/release/Blender5.2/blender-5.2.0-macos-arm64.dmg
+            sha256: ed4d8390166dec5ea0a2813a03db6221f206ce016442be7f59f41d760972568a
+          - label: Windows (best effort)
+            os: windows-latest
+            best_effort: true
+            download_url: https://download.blender.org/release/Blender5.2/blender-5.2.0-windows-x64.zip
+            sha256: 2d184b626c001692c362291911293b6a297179d618d95e9e9192c3a80318adc4
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: uv sync --locked
+
+      - name: Install Ubuntu GUI runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libegl1 \
+            libgl1 \
+            libgl1-mesa-dri \
+            libglx-mesa0 \
+            libice6 \
+            libsm6 \
+            libx11-6 \
+            libxcursor1 \
+            libxext6 \
+            libxfixes3 \
+            libxi6 \
+            libxinerama1 \
+            libxkbcommon0 \
+            libxrandr2 \
+            libxrender1 \
+            libxt6 \
+            libxxf86vm1 \
+            xauth \
+            xvfb
+
+      - name: Install pinned Blender on Ubuntu
+        if: runner.os == 'Linux'
+        env:
+          BLENDER_DOWNLOAD_URL: ${{ matrix.download_url }}
+          BLENDER_SHA256: ${{ matrix.sha256 }}
+        run: |
+          archive="$RUNNER_TEMP/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          curl --fail --location --retry 3 \
+            --output "$archive" "$BLENDER_DOWNLOAD_URL"
+          echo "${BLENDER_SHA256}  ${archive}" | sha256sum --check -
+          tar --extract --xz --file "$archive" --directory "$RUNNER_TEMP"
+          blender_path="$RUNNER_TEMP/blender-${BLENDER_VERSION}-linux-x64/blender"
+          echo "BLENDER_PATH=$blender_path" >> "$GITHUB_ENV"
+
+      - name: Verify Ubuntu runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          missing="$(ldd "$BLENDER_PATH" | awk '/not found/ { print }')"
+          if [[ -n "$missing" ]]; then
+            echo "$missing"
+            exit 1
+          fi
+
+      - name: Install pinned Blender on macOS
+        if: runner.os == 'macOS'
+        env:
+          BLENDER_DOWNLOAD_URL: ${{ matrix.download_url }}
+          BLENDER_SHA256: ${{ matrix.sha256 }}
+        run: |
+          archive="$RUNNER_TEMP/blender-${BLENDER_VERSION}-macos-arm64.dmg"
+          curl --fail --location --retry 3 \
+            --output "$archive" "$BLENDER_DOWNLOAD_URL"
+          echo "${BLENDER_SHA256}  ${archive}" | shasum --algorithm 256 --check
+          mount_point="$RUNNER_TEMP/blender-mount"
+          mkdir "$mount_point"
+          hdiutil attach "$archive" -nobrowse -mountpoint "$mount_point"
+          ditto "$mount_point/Blender.app" "$RUNNER_TEMP/Blender.app"
+          hdiutil detach "$mount_point"
+          echo "BLENDER_PATH=$RUNNER_TEMP/Blender.app/Contents/MacOS/Blender" \
+            >> "$GITHUB_ENV"
+
+      - name: Install pinned Blender on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          BLENDER_DOWNLOAD_URL: ${{ matrix.download_url }}
+          BLENDER_SHA256: ${{ matrix.sha256 }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "blender-$env:BLENDER_VERSION-windows-x64.zip"
+          Invoke-WebRequest -Uri $env:BLENDER_DOWNLOAD_URL -OutFile $archive
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $env:BLENDER_SHA256) {
+            throw "Blender SHA-256 mismatch: expected $env:BLENDER_SHA256, got $actual"
+          }
+          Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP
+          $blenderPath = Join-Path $env:RUNNER_TEMP `
+            "blender-$env:BLENDER_VERSION-windows-x64\blender.exe"
+          "BLENDER_PATH=$blenderPath" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Real Session lifecycle smoke on Ubuntu
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          # Keep one display alive across every CLI subprocess and the detached
+          # Blender Session; this is runner plumbing, not a tool headless mode.
+          xvfb-run -a uv run python scripts/real_blender_smoke.py \
+            --blender "$BLENDER_PATH" \
+            --expected-version "$BLENDER_VERSION" \
+            --state-dir "$RUNNER_TEMP/blendersessiond-real-smoke"
+
+      - name: Real Session lifecycle smoke on macOS
+        if: runner.os == 'macOS'
+        run: |
+          uv run python scripts/real_blender_smoke.py \
+            --blender "$BLENDER_PATH" \
+            --expected-version "$BLENDER_VERSION" \
+            --state-dir "$RUNNER_TEMP/blendersessiond-real-smoke"
+
+      - name: Real Session lifecycle smoke on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          uv run python scripts/real_blender_smoke.py `
+            --blender "$env:BLENDER_PATH" `
+            --expected-version "$env:BLENDER_VERSION" `
+            --state-dir "$env:RUNNER_TEMP\blendersessiond-real-smoke"
+
+      - name: Upload Session logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-blender-session-logs-${{ runner.os }}
+          path: ${{ runner.temp }}/blendersessiond-real-smoke/**/*.log
+          if-no-files-found: warn
