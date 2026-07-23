@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
@@ -80,7 +81,14 @@ def test_connection_refused() -> None:
     port = temporary.getsockname()[1]
     temporary.close()
 
-    with pytest.raises(WireConnectionError, match="Could not connect"):
+    # Windows runners drop loopback SYNs to closed ports instead of sending
+    # RST, so the same dead socket legitimately surfaces as a timeout there.
+    expected = (
+        (WireConnectionError, WireTimeoutError)
+        if os.name == "nt"
+        else WireConnectionError
+    )
+    with pytest.raises(expected):
         call_addon(port, "get_scene_info", connect_timeout=0.1)
 
 
