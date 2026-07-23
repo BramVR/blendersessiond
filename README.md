@@ -49,14 +49,23 @@ uv run blendersessiond start
 uv run blendersessiond start --name second --blender /path/to/blender
 uv run blendersessiond status
 uv run blendersessiond status --name second --json
+uv run blendersessiond call get_scene_info --name second
+uv run blendersessiond call get_object_info --name second \
+  --params '{"name":"Cube"}'
 uv run blendersessiond stop --name second
 ```
 
 The default Session Name is `default`. Each Session has its own directory,
 record, stdout/stderr logs, and reserved MCP port beginning at 9876. `stop`
 terminates the owned process tree without saving and removes the record; logs
-remain. At this slice, Session Health reports the process separately from the
-socket, whose status is `not-configured`.
+remain. Session Health requires both the owned Blender process and its
+loopback MCP addon socket to answer. A live process with a dead or unresponsive
+socket is unhealthy with separate process and socket details in `status` and
+`doctor`.
+
+`call COMMAND [--params JSON]` opens one short-lived connection to the named
+Session, sends the raw BlenderMCP addon command, and prints its JSON result.
+Addon-reported errors are printed on stderr and exit 1.
 
 Set `BLENDERSESSIOND_STATE_DIR` to an absolute path to override the platform
 data directory. This is intended for isolated automation and tests:
@@ -78,4 +87,6 @@ Real-Blender lifecycle behavior is CI-gated by the required Ubuntu leg in
 
 - Ubiquitous language: [CONTEXT.md](CONTEXT.md)
 - Decisions: [docs/adr/](docs/adr/)
+- BlenderMCP pin and patch: [docs/compat.md](docs/compat.md)
+- Third-party attribution: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 - v1 scope and plan: [PRD issue #1](https://github.com/BramVR/blendersessiond/issues/1)

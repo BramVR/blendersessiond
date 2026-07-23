@@ -74,8 +74,12 @@ def test_start_status_stop_kills_tree_and_keeps_logs(
         "status": "healthy",
         "process": {"status": "healthy", "alive": True},
         "socket": {
-            "status": "not-configured",
-            "message": "The Session socket is not configured in this slice.",
+            "status": "healthy",
+            "answered": True,
+            "reason": "answered",
+            "message": (
+                "Addon socket at 127.0.0.1:9876 answered the Health ping."
+            ),
         },
     }
 
@@ -88,6 +92,9 @@ def test_start_status_stop_kills_tree_and_keeps_logs(
     )
     assert session_check["status"] == "pass"
     assert "record is readable" in session_check["message"]
+    doctor_session = doctor.payload["sessions"][0]
+    assert doctor_session["health"]["process"]["alive"] is True
+    assert doctor_session["health"]["socket"]["answered"] is True
 
     child_pid = int(_wait_for_file(child_pid_file))
     stdout_log = Path(session["logs"]["stdout"])
@@ -99,6 +106,7 @@ def test_start_status_stop_kills_tree_and_keeps_logs(
         assert S_IMODE(session_directory.stat().st_mode) == 0o700
         for private_file in (
             session_directory / ".lock",
+            session_directory / ".wire.lock",
             session_directory / "session.json",
             session_directory / "ownership.json",
             stdout_log,
@@ -157,6 +165,57 @@ def test_two_named_sessions_have_distinct_ports_and_live_start_is_rejected(
 
     assert run("stop", "--name", "a").completed.returncode == 0
     assert run("stop", "--name", "61").completed.returncode == 0
+
+
+def test_call_round_trip_and_parameterized_command(
+    isolated_cli,
+    fake_blender: Path,
+) -> None:
+    _environment, run = isolated_cli
+    started = run("start", "--blender", str(fake_blender))
+    assert started.completed.returncode == 0
+
+    scene = run("call", "get_scene_info")
+    object_info = run(
+        "call",
+        "get_object_info",
+        "--params",
+        '{"name":"Cube"}',
+    )
+
+    assert scene.completed.returncode == 0
+    assert scene.payload["name"] == "Scene"
+    assert scene.payload["object_count"] == 3
+    assert object_info.completed.returncode == 0
+    assert object_info.payload == {"name": "Cube", "type": "MESH"}
+    assert run("stop").completed.returncode == 0
+
+
+def test_live_process_with_dead_socket_is_unhealthy_with_reason(
+    isolated_cli,
+    fake_blender: Path,
+) -> None:
+    environment, run = isolated_cli
+    environment["FAKE_BLENDER_DISABLE_MCP_SOCKET"] = "1"
+    started = run("start", "--blender", str(fake_blender))
+    assert started.completed.returncode == 0
+
+    status = run("status", "--name", "default")
+
+    assert status.completed.returncode == 1
+    assert status.payload["status"] == "unhealthy"
+    assert status.payload["session"]["health"]["process"] == {
+        "status": "healthy",
+        "alive": True,
+    }
+    socket_health = status.payload["session"]["health"]["socket"]
+    assert socket_health["status"] == "unhealthy"
+    assert socket_health["answered"] is False
+    assert socket_health["reason"] == "connection-failed"
+    assert "process is alive, but its MCP addon socket is unhealthy" in (
+        status.payload["session"]["message"]
+    )
+    assert run("stop").completed.returncode == 0
 
 
 def test_concurrent_start_calls_have_one_owner(

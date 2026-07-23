@@ -60,6 +60,7 @@ def test_posix_launcher_reports_exec_failure(tmp_path: Path) -> None:
             environ=dict(os.environ),
             gate_path=gate,
             bootstrap_path=bootstrap,
+            addon_bootstrap_path=tmp_path / "addon-bootstrap.py",
         )
 
     with pytest.raises(RuntimeError, match="POSIX Blender launch failed"):

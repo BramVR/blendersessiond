@@ -24,10 +24,12 @@ from blendersessiond.processes import (
     wait_for_process_start_time,
 )
 from blendersessiond.state import resolve_state_directory
+from blendersessiond.wire import call_addon, probe_addon
 
 DEFAULT_SESSION_NAME = "default"
 BASE_MCP_PORT = 9876
 OWNER_ENV_VAR = "BLENDERSESSIOND_OWNER_TOKEN"
+MCP_PORT_ENV_VAR = "BLENDERSESSIOND_MCP_PORT"
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _RECORD_FILE = "session.json"
 _OWNERSHIP_FILE = "ownership.json"
@@ -90,6 +92,12 @@ class SessionInspection:
     record: SessionRecord | None = None
     reclaimable: bool = False
     stoppable: bool = False
+    process_alive: bool = False
+    socket_status: str = "not-checked"
+    socket_reason: str = "process-not-alive"
+    socket_message: str = (
+        "Socket Health was not checked because the process is not alive."
+    )
 
     @property
     def healthy(self) -> bool:
@@ -107,12 +115,14 @@ class SessionInspection:
         result["health"] = {
             "status": "healthy" if self.healthy else "unhealthy",
             "process": {
-                "status": "healthy" if self.healthy else self.status,
-                "alive": self.healthy,
+                "status": "healthy" if self.process_alive else self.status,
+                "alive": self.process_alive,
             },
             "socket": {
-                "status": "not-configured",
-                "message": "The Session socket is not configured in this slice.",
+                "status": self.socket_status,
+                "answered": self.socket_status == "healthy",
+                "reason": self.socket_reason,
+                "message": self.socket_message,
             },
         }
         return result
@@ -130,6 +140,33 @@ class StopResult:
     inspection: SessionInspection
     stopped: bool
     message: str
+
+
+def call_session(
+    command: str,
+    *,
+    params: dict[str, Any] | None = None,
+    name: str = DEFAULT_SESSION_NAME,
+    state_root: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> Any:
+    """Call one raw addon command on a healthy named Session."""
+
+    validate_session_name(name)
+    root = _resolve_root(state_root, environ)
+    directory = session_directory(root, name)
+    if not directory.exists():
+        raise SessionError(_not_found(name).message)
+    with file_lock(directory / ".lock"):
+        inspection = _inspect_unlocked(root, name)
+        if not inspection.healthy or inspection.record is None:
+            raise SessionError(inspection.message)
+        with file_lock(directory / ".wire.lock"):
+            return call_addon(
+                inspection.record.mcp_port,
+                command,
+                params,
+            )
 
 
 def validate_session_name(name: str) -> str:
@@ -171,9 +208,12 @@ def start_session(
     _ensure_private_directory(directory)
     with file_lock(directory / ".lock"):
         previous = _inspect_unlocked(root, name)
-        if previous.healthy:
+        if previous.healthy or (
+            previous.process_alive and previous.stoppable
+        ):
             raise AlreadyRunningError(
-                f"Session '{name}' is already running; reuse it."
+                f"Session '{name}' is already running; reuse it. "
+                f"{previous.message}"
             )
 
         if previous.status != "not-found" and not previous.reclaimable:
@@ -365,6 +405,8 @@ def _launch_and_record(
     owner_token = secrets.token_hex(32)
     process_environment = dict(environment)
     process_environment[OWNER_ENV_VAR] = owner_token
+    process_environment[MCP_PORT_ENV_VAR] = str(port)
+    addon_bootstrap_path = Path(__file__).with_name("blender_bootstrap.py").resolve()
 
     controller_pid: int | None = None
     controller_start_time: str | None = None
@@ -383,6 +425,7 @@ def _launch_and_record(
                 stderr_path=stderr_path,
                 environ=process_environment,
                 bootstrap_path=bootstrap_path,
+                addon_bootstrap_path=addon_bootstrap_path,
             )
         else:
             gate_path.unlink(missing_ok=True)
@@ -397,6 +440,7 @@ def _launch_and_record(
                     environ=process_environment,
                     gate_path=gate_path,
                     bootstrap_path=bootstrap_path,
+                    addon_bootstrap_path=addon_bootstrap_path,
                 )
             controller_pid = process.pid
 
@@ -551,6 +595,10 @@ def _inspect_unlocked(state_root: Path, name: str) -> SessionInspection:
             record,
             False,
             True,
+            True,
+            "not-checked",
+            "launching",
+            "Socket Health was not checked while launch is in progress.",
         )
     if not root_matches:
         if tree_exists:
@@ -575,13 +623,35 @@ def _inspect_unlocked(state_root: Path, name: str) -> SessionInspection:
             record,
             True,
         )
+    with file_lock(directory / ".wire.lock"):
+        probe = probe_addon(record.mcp_port)
+    if probe.healthy:
+        return SessionInspection(
+            name,
+            "healthy",
+            f"Session '{name}' process is alive and its MCP addon socket answers.",
+            record,
+            False,
+            True,
+            True,
+            "healthy",
+            probe.reason,
+            probe.message,
+        )
     return SessionInspection(
         name,
-        "healthy",
-        f"Session '{name}' process is alive.",
+        "unhealthy",
+        (
+            f"Session '{name}' process is alive, but its MCP addon socket is "
+            f"unhealthy: {probe.message}"
+        ),
         record,
         False,
         True,
+        True,
+        "unhealthy",
+        probe.reason,
+        probe.message,
     )
 
 

@@ -71,6 +71,7 @@ class DoctorReport:
                 "source": self.blender.source,
             },
             "state_dir": self.state_directory.path,
+            "sessions": [session.to_dict() for session in self.sessions],
         }
 
 

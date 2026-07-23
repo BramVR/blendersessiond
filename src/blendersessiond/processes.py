@@ -24,6 +24,7 @@ def spawn_detached(
     environ: dict[str, str],
     gate_path: Path,
     bootstrap_path: Path,
+    addon_bootstrap_path: Path,
 ) -> subprocess.Popen[bytes]:
     """Launch a detached process-tree root waiting behind a pre-exec gate."""
 
@@ -43,6 +44,7 @@ def spawn_detached(
             str(gate_path),
             executable,
             str(bootstrap_path),
+            str(addon_bootstrap_path),
         ],
         **arguments,
     )
@@ -55,6 +57,7 @@ def spawn_windows_job_keeper(
     stderr_path: Path,
     environ: dict[str, str],
     bootstrap_path: Path,
+    addon_bootstrap_path: Path,
 ) -> int:
     """Launch a persistent Job Object keeper blocked before Blender spawn."""
 
@@ -70,6 +73,7 @@ def spawn_windows_job_keeper(
             str(stdout_path),
             str(stderr_path),
             str(bootstrap_path),
+            str(addon_bootstrap_path),
         ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
