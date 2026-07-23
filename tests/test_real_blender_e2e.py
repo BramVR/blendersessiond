@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import platform
 import time
@@ -73,6 +74,33 @@ def test_real_blender_start_status_stop_round_trip(
             "status": "healthy",
             "alive": True,
         }
+        assert status.payload["session"]["health"]["socket"] == {
+            "status": "healthy",
+            "answered": True,
+            "reason": "answered",
+            "message": (
+                "Addon socket at 127.0.0.1:9876 answered the Health ping."
+            ),
+        }
+
+        scene = run("call", "get_scene_info", timeout=30)
+        assert scene.completed.returncode == 0, scene.completed.stderr
+        assert {
+            "name",
+            "object_count",
+            "objects",
+            "materials_count",
+        } <= scene.payload.keys()
+
+        cube = run(
+            "call",
+            "get_object_info",
+            "--params",
+            '{"name":"Cube"}',
+            timeout=30,
+        )
+        assert cube.completed.returncode == 0, cube.completed.stderr
+        assert cube.payload["name"] == "Cube"
     finally:
         if started:
             stopped = run("stop", timeout=30)
@@ -81,3 +109,59 @@ def test_real_blender_start_status_stop_round_trip(
     gone = run("status", "--name", "default")
     assert gone.completed.returncode == 1
     assert gone.payload["status"] == "not-found"
+
+
+def test_two_real_sessions_answer_independently(
+    isolated_cli,
+    real_blender_path: Path,
+) -> None:
+    environment, run = isolated_cli
+    environment["PATH"] = (
+        str(real_blender_path.parent)
+        + os.pathsep
+        + environment.get("PATH", "")
+    )
+    names = ("real-a", "real-b")
+    started: list[str] = []
+    try:
+        first = run("start", "--name", names[0], timeout=45)
+        assert first.completed.returncode == 0, first.completed.stderr
+        started.append(names[0])
+        second = run("start", "--name", names[1], timeout=45)
+        assert second.completed.returncode == 0, second.completed.stderr
+        started.append(names[1])
+        assert (
+            first.payload["session"]["mcp_port"]
+            != second.payload["session"]["mcp_port"]
+        )
+
+        for name in names:
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                status = run("status", "--name", name)
+                if status.completed.returncode == 0:
+                    break
+                time.sleep(0.25)
+            assert status.completed.returncode == 0, status.completed.stderr
+            renamed = run(
+                "call",
+                "execute_code",
+                "--name",
+                name,
+                "--params",
+                json.dumps({"code": f"bpy.context.scene.name = {name!r}"}),
+                timeout=30,
+            )
+            assert renamed.completed.returncode == 0, renamed.completed.stderr
+
+        scenes = {
+            name: run("call", "get_scene_info", "--name", name, timeout=30)
+            for name in names
+        }
+        assert {name: result.payload["name"] for name, result in scenes.items()} == {
+            name: name for name in names
+        }
+    finally:
+        for name in reversed(started):
+            stopped = run("stop", "--name", name, timeout=30)
+            assert stopped.completed.returncode == 0, stopped.completed.stderr
