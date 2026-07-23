@@ -15,7 +15,8 @@ from blendersessiond.processes import (
 
 def test_linux_process_identity_includes_boot_id(monkeypatch) -> None:
     def read_text(path: Path, **_kwargs) -> str:
-        if str(path).endswith("/boot_id"):
+        # Match by name: str(path) uses backslashes on a Windows host.
+        if path.name == "boot_id":
             return "boot-identity\n"
         return "123 (fake process) S " + " ".join(
             str(value) for value in range(1, 25)

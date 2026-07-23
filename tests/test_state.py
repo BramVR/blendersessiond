@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from stat import S_IMODE
 
@@ -88,6 +89,7 @@ def test_state_directory_writability_probe(tmp_path: Path) -> None:
     assert list(state_path.iterdir()) == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not honor POSIX modes")
 def test_existing_override_permissions_are_not_changed(tmp_path: Path) -> None:
     state_path = tmp_path / "caller-owned"
     state_path.mkdir(mode=0o755)
