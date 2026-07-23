@@ -461,7 +461,7 @@ def _linux_process_group_has_live_members(process_group: int) -> bool:
 def _terminate_windows_tree(pid: int) -> None:
     try:
         completed = subprocess.run(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            _windows_taskkill_command(pid, tree=True),
             capture_output=True,
             text=True,
             timeout=15,
@@ -481,7 +481,7 @@ def _terminate_windows_tree(pid: int) -> None:
 def _terminate_windows_pid(pid: int) -> None:
     try:
         completed = subprocess.run(
-            ["taskkill", "/PID", str(pid), "/F"],
+            _windows_taskkill_command(pid, tree=False),
             capture_output=True,
             text=True,
             timeout=15,
@@ -494,3 +494,16 @@ def _terminate_windows_pid(pid: int) -> None:
     if completed.returncode not in (0, 128):
         details = completed.stderr.strip() or completed.stdout.strip()
         raise RuntimeError(f"Windows could not stop the Job Object keeper: {details}")
+
+
+def _windows_taskkill_command(pid: int, *, tree: bool) -> list[str]:
+    taskkill = (
+        Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        / "System32"
+        / "taskkill.exe"
+    )
+    command = [str(taskkill), "/PID", str(pid)]
+    if tree:
+        command.append("/T")
+    command.append("/F")
+    return command

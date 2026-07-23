@@ -29,6 +29,17 @@ def _wait_until_gone(pid: int, timeout: float = 10) -> None:
     pytest.fail(f"process {pid} did not exit")
 
 
+def _wait_until_reaped(pid: int, timeout: float = 5) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    pytest.fail(f"process {pid} was not reaped")
+
+
 def _wait_for_file(path: Path, timeout: float = 5) -> str:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -217,6 +228,8 @@ def test_stop_terminates_tree_after_blender_root_exits(
     assert status is not None
     assert status.payload["status"] == "stale"
     assert status.payload["session"]["reclaimable"] is False
+    if os.name != "nt":
+        _wait_until_reaped(started.payload["session"]["pid"])
 
     stopped = run("stop", "--name", "orphan")
     assert stopped.completed.returncode == 0

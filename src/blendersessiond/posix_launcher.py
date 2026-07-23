@@ -48,6 +48,7 @@ def main() -> int:
             except OSError:
                 os.killpg(os.getpgrp(), signal.SIGKILL)
                 return 1
+            process.wait()
             while True:
                 time.sleep(1)
         time.sleep(0.01)

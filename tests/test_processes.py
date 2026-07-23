@@ -7,6 +7,7 @@ import pytest
 
 from blendersessiond.processes import (
     _linux_process_start_time,
+    _windows_taskkill_command,
     finish_posix_start,
     spawn_detached,
 )
@@ -23,6 +24,25 @@ def test_linux_process_identity_includes_boot_id(monkeypatch) -> None:
     monkeypatch.setattr(Path, "read_text", read_text)
 
     assert _linux_process_start_time(123) == "linux:boot-identity:19"
+
+
+def test_windows_taskkill_commands_use_system32(monkeypatch, tmp_path: Path) -> None:
+    system_root = tmp_path / "Windows"
+    monkeypatch.setenv("SystemRoot", str(system_root))
+
+    assert _windows_taskkill_command(123, tree=True) == [
+        str(system_root / "System32" / "taskkill.exe"),
+        "/PID",
+        "123",
+        "/T",
+        "/F",
+    ]
+    assert _windows_taskkill_command(456, tree=False) == [
+        str(system_root / "System32" / "taskkill.exe"),
+        "/PID",
+        "456",
+        "/F",
+    ]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec handshake")
