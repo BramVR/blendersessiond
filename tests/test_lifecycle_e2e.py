@@ -211,7 +211,12 @@ def test_live_process_with_dead_socket_is_unhealthy_with_reason(
     socket_health = status.payload["session"]["health"]["socket"]
     assert socket_health["status"] == "unhealthy"
     assert socket_health["answered"] is False
-    assert socket_health["reason"] == "connection-failed"
+    # Windows runners drop loopback SYNs to closed ports instead of RST,
+    # so a dead socket legitimately reports a timeout reason there.
+    expected_reasons = (
+        {"connection-failed", "timeout"} if os.name == "nt" else {"connection-failed"}
+    )
+    assert socket_health["reason"] in expected_reasons
     assert "process is alive, but its MCP addon socket is unhealthy" in (
         status.payload["session"]["message"]
     )
