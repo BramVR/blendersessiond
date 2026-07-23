@@ -31,6 +31,7 @@ markers = [
 
 [tool.ruff]
 target-version = "py311"
+extend-exclude = ["src/blendersessiond/vendor/addon.py"]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "UP"]

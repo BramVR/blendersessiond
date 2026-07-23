@@ -1,0 +1,19 @@
+--- addon.py (ahujasid/blender-mcp da4e16d2069ce5154eaa2535bf995e843caf5c73)
++++ src/blendersessiond/vendor/addon.py
+@@ -44,7 +44,7 @@
+     return addon.preferences if addon else None
+ 
+ class BlenderMCPServer:
+-    def __init__(self, host='localhost', port=9876):
++    def __init__(self, host='127.0.0.1', port=9876):
+         self.host = host
+         self.port = port
+         self.running = False
+@@ -2833,6 +2833,7 @@
+     else:
+         port = 9876
+         auto_start = True
++    port = int(os.environ.get("BLENDERSESSIOND_MCP_PORT", port))
+ 
+     if auto_start and (not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server):
+         bpy.types.blendermcp_server = BlenderMCPServer(port=port)
