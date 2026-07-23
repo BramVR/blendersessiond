@@ -14,6 +14,7 @@ from blendersessiond.discovery import (
     discover_blender,
     platform_label,
 )
+from blendersessiond.sessions import SessionInspection, inspect_all_sessions
 from blendersessiond.state import (
     StateDirectoryCheck,
     check_state_directory,
@@ -45,6 +46,7 @@ class DoctorReport:
     checks: tuple[Check, ...]
     blender: BlenderDiscovery
     state_directory: StateDirectoryCheck
+    sessions: tuple[SessionInspection, ...] = ()
 
     @property
     def status(self) -> str:
@@ -103,6 +105,11 @@ def build_doctor_report(
     )
     state_directory = check_state_directory(state_path)
 
+    sessions = (
+        tuple(inspect_all_sessions(state_root=state_path))
+        if state_directory.passed
+        else ()
+    )
     checks = (
         Check.from_result("platform", platform_passed, platform_message),
         Check.from_result("blender", blender.passed, blender.message),
@@ -111,6 +118,19 @@ def build_doctor_report(
             state_directory.passed,
             state_directory.message,
         ),
+        *(
+            Check.from_result(
+                f"session:{session.name}",
+                session.healthy,
+                (
+                    f"Session '{session.name}' record is readable; "
+                    f"{session.message}"
+                    if session.healthy
+                    else session.message
+                ),
+            )
+            for session in sessions
+        ),
     )
     return DoctorReport(
         platform_system=current_system,
@@ -118,4 +138,5 @@ def build_doctor_report(
         checks=checks,
         blender=blender,
         state_directory=state_directory,
+        sessions=sessions,
     )

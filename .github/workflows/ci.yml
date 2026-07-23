@@ -33,8 +33,11 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
-      - name: Pytest
-        run: uv run pytest
+      - name: Pytest unit
+        run: uv run pytest -m "not e2e"
+
+      - name: Fake-Blender lifecycle e2e
+        run: uv run pytest -m "e2e and not real_blender"
 
       - name: Install Blender
         if: runner.os == 'Linux'

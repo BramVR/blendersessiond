@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from blendersessiond.processes import process_start_time
+from blendersessiond.sessions import (
+    SessionError,
+    SessionRecord,
+    inspect_session,
+    session_directory,
+    start_session,
+    stop_session,
+    validate_session_name,
+)
+
+
+@pytest.mark.parametrize("name", ["default", "shot-01", "shot.one", "shot_one", "9"])
+def test_valid_session_names(name: str) -> None:
+    assert validate_session_name(name) == name
+
+
+@pytest.mark.parametrize("name", ["", "../escape", ".hidden", "has space", "a" * 65])
+def test_invalid_session_names(name: str) -> None:
+    with pytest.raises(ValueError, match="Session Name"):
+        validate_session_name(name)
+
+
+def test_state_components_are_portable_and_case_distinct(tmp_path: Path) -> None:
+    upper = session_directory(tmp_path, "CON")
+    lower = session_directory(tmp_path, "con")
+
+    assert upper != lower
+    assert upper.name == "CON".encode("ascii").hex()
+    assert lower.name == "con".encode("ascii").hex()
+    assert upper.name.isalnum()
+
+
+def test_start_time_mismatch_is_stale_even_for_a_live_pid(tmp_path: Path) -> None:
+    directory = session_directory(tmp_path, "reused")
+    directory.mkdir(parents=True)
+    token = "test-token"
+    record = SessionRecord(
+        schema_version=1,
+        name="reused",
+        pid=os.getpid(),
+        process_start_time="definitely-not-this-process",
+        mcp_port=9876,
+        blender_path="/fake/blender",
+        blender_version="4.3.2",
+        stdout_log=str(directory / "stdout.log"),
+        stderr_log=str(directory / "stderr.log"),
+        state_dir=str(directory),
+        started_at="2026-07-23T00:00:00+00:00",
+        owner_token=token,
+        controller_pid=os.getpid(),
+        controller_start_time="definitely-not-this-controller",
+    )
+    (directory / "session.json").write_text(
+        json.dumps(record.__dict__),
+        encoding="utf-8",
+    )
+    (directory / "ownership.json").write_text(
+        json.dumps({"token": token}),
+        encoding="utf-8",
+    )
+
+    result = inspect_session(name="reused", state_root=tmp_path)
+
+    assert process_start_time(os.getpid()) is not None
+    assert result.status == "stale"
+    assert result.healthy is False
+    assert "process start time does not match" in result.message
+
+
+def test_missing_ownership_marker_is_stale(tmp_path: Path) -> None:
+    directory = session_directory(tmp_path, "unowned")
+    directory.mkdir(parents=True)
+    record = SessionRecord(
+        schema_version=1,
+        name="unowned",
+        pid=os.getpid(),
+        process_start_time=process_start_time(os.getpid()) or "missing",
+        mcp_port=9876,
+        blender_path="/fake/blender",
+        blender_version="4.3.2",
+        stdout_log=str(directory / "stdout.log"),
+        stderr_log=str(directory / "stderr.log"),
+        state_dir=str(directory),
+        started_at="2026-07-23T00:00:00+00:00",
+        owner_token="missing",
+        controller_pid=os.getpid(),
+        controller_start_time=process_start_time(os.getpid()) or "missing",
+    )
+    (directory / "session.json").write_text(
+        json.dumps(record.__dict__),
+        encoding="utf-8",
+    )
+
+    result = inspect_session(name="unowned", state_root=tmp_path)
+
+    assert result.status == "stale"
+    assert "Ownership marker" in result.message
+
+
+def test_live_unverifiable_record_is_preserved_and_cannot_be_reclaimed(
+    tmp_path: Path,
+) -> None:
+    directory = session_directory(tmp_path, "unverifiable")
+    directory.mkdir(parents=True)
+    record = SessionRecord(
+        schema_version=1,
+        name="unverifiable",
+        pid=os.getpid(),
+        process_start_time=process_start_time(os.getpid()) or "missing",
+        mcp_port=9876,
+        blender_path="/fake/blender",
+        blender_version="4.3.2",
+        stdout_log=str(directory / "stdout.log"),
+        stderr_log=str(directory / "stderr.log"),
+        state_dir=str(directory),
+        started_at="2026-07-23T00:00:00+00:00",
+        owner_token="missing-marker",
+        controller_pid=os.getpid(),
+        controller_start_time=process_start_time(os.getpid()) or "missing",
+    )
+    record_path = directory / "session.json"
+    record_path.write_text(json.dumps(record.__dict__), encoding="utf-8")
+
+    with pytest.raises(SessionError, match="cannot be reclaimed"):
+        start_session(name="unverifiable", state_root=tmp_path)
+    stopped = stop_session(name="unverifiable", state_root=tmp_path)
+
+    assert stopped.stopped is False
+    assert "Preserved the Session record" in stopped.message
+    assert record_path.exists()
+    assert process_start_time(os.getpid()) == record.process_start_time
+
+
+def test_non_positive_record_pid_is_unreadable_and_never_signaled(
+    tmp_path: Path,
+) -> None:
+    directory = session_directory(tmp_path, "invalid-pid")
+    directory.mkdir(parents=True)
+    payload = {
+        "schema_version": 1,
+        "name": "invalid-pid",
+        "pid": 0,
+        "process_start_time": "invalid",
+        "mcp_port": 9876,
+        "blender_path": "/fake/blender",
+        "blender_version": "4.3.2",
+        "stdout_log": str(directory / "stdout.log"),
+        "stderr_log": str(directory / "stderr.log"),
+        "state_dir": str(directory),
+        "started_at": "2026-07-23T00:00:00+00:00",
+        "owner_token": "token",
+        "controller_pid": 0,
+        "controller_start_time": "invalid",
+    }
+    (directory / "session.json").write_text(json.dumps(payload), encoding="utf-8")
+    (directory / "ownership.json").write_text(
+        json.dumps({"token": "token"}),
+        encoding="utf-8",
+    )
+
+    inspection = inspect_session(name="invalid-pid", state_root=tmp_path)
+    stopped = stop_session(name="invalid-pid", state_root=tmp_path)
+
+    assert inspection.status == "unreadable"
+    assert "pid fields must be positive" in inspection.message
+    assert stopped.stopped is False

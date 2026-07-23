@@ -5,8 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from typing import Any
 
 from blendersessiond.doctor import DoctorReport, build_doctor_report
+from blendersessiond.sessions import (
+    DEFAULT_SESSION_NAME,
+    AlreadyRunningError,
+    SessionError,
+    inspect_all_sessions,
+    inspect_session,
+    start_session,
+    stop_session,
+    validate_session_name,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +41,35 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the versioned machine-readable report.",
     )
+    start = commands.add_parser(
+        "start",
+        help="Start and own a Blender Session.",
+    )
+    _add_name_argument(start)
+    start.add_argument(
+        "--blender",
+        metavar="PATH",
+        help="Use this Blender executable.",
+    )
+    _add_json_argument(start)
+
+    status = commands.add_parser(
+        "status",
+        help="Report Session Health.",
+    )
+    status.add_argument(
+        "--name",
+        type=_session_name,
+        help="Report one Session Name; omit to list all Sessions.",
+    )
+    _add_json_argument(status)
+
+    stop = commands.add_parser(
+        "stop",
+        help="Stop an owned Session without saving.",
+    )
+    _add_name_argument(stop)
+    _add_json_argument(stop)
     return parser
 
 
@@ -37,12 +77,104 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "doctor":
-        report = build_doctor_report(explicit_blender=args.blender)
+        try:
+            report = build_doctor_report(explicit_blender=args.blender)
+        except (OSError, RuntimeError, ValueError) as error:
+            _print_failure(
+                command="doctor",
+                message=str(error),
+                as_json=args.json,
+            )
+            return 1
         if args.json:
             print(json.dumps(report.to_dict(), indent=2))
         else:
             _print_human_report(report)
         return 0 if report.status == "pass" else 1
+
+    if args.command == "start":
+        try:
+            result = start_session(
+                name=args.name,
+                explicit_blender=args.blender,
+            )
+        except (
+            AlreadyRunningError,
+            SessionError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as error:
+            _print_failure(
+                command="start",
+                message=str(error),
+                as_json=args.json,
+            )
+            return 1
+        payload = {
+            "schema_version": 1,
+            "status": "started",
+            "message": result.message,
+            "reclaimed_stale": result.reclaimed_stale,
+            "session": result.record.public_dict(),
+        }
+        _print_result(payload, as_json=args.json)
+        return 0
+
+    if args.command == "status":
+        try:
+            if args.name is not None:
+                inspection = inspect_session(name=args.name)
+                payload = {
+                    "schema_version": 1,
+                    "status": inspection.status,
+                    "session": inspection.to_dict(),
+                }
+                _print_result(payload, as_json=args.json)
+                return 0 if inspection.healthy else 1
+
+            inspections = inspect_all_sessions()
+        except (OSError, RuntimeError, ValueError) as error:
+            _print_failure(
+                command="status",
+                message=str(error),
+                as_json=args.json,
+            )
+            return 1
+        healthy = bool(inspections) and all(
+            inspection.healthy for inspection in inspections
+        )
+        payload = {
+            "schema_version": 1,
+            "status": "healthy" if healthy else "unhealthy",
+            "message": (
+                f"Found {len(inspections)} recorded Session(s)."
+                if inspections
+                else "No Sessions found."
+            ),
+            "sessions": [inspection.to_dict() for inspection in inspections],
+        }
+        _print_result(payload, as_json=args.json)
+        return 0 if healthy else 1
+
+    if args.command == "stop":
+        try:
+            result = stop_session(name=args.name)
+        except (OSError, RuntimeError, ValueError) as error:
+            _print_failure(
+                command="stop",
+                message=str(error),
+                as_json=args.json,
+            )
+            return 1
+        payload = {
+            "schema_version": 1,
+            "status": "stopped" if result.stopped else result.inspection.status,
+            "message": result.message,
+            "session": result.inspection.to_dict(),
+        }
+        _print_result(payload, as_json=args.json)
+        return 0 if result.stopped else 1
 
     raise AssertionError(f"unhandled command: {args.command}")
 
@@ -55,3 +187,72 @@ def _print_human_report(report: DoctorReport) -> None:
         print("PASS: This machine can host a Session.")
     else:
         print("FAIL: This machine cannot host a Session until the checks pass.")
+
+
+def _add_name_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--name",
+        default=DEFAULT_SESSION_NAME,
+        type=_session_name,
+        help=f"Session Name (default: {DEFAULT_SESSION_NAME}).",
+    )
+
+
+def _add_json_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the versioned machine-readable result.",
+    )
+
+
+def _session_name(value: str) -> str:
+    try:
+        return validate_session_name(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _print_result(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    message = payload.get("message")
+    if isinstance(message, str):
+        print(message)
+    session = payload.get("session")
+    if isinstance(session, dict):
+        _print_session(session)
+    sessions = payload.get("sessions")
+    if isinstance(sessions, list):
+        if not sessions:
+            return
+        for item in sessions:
+            if isinstance(item, dict):
+                _print_session(item)
+
+
+def _print_session(session: dict[str, Any]) -> None:
+    print(
+        f"Session {session['name']}: {session.get('status', 'recorded')} "
+        f"(pid {session.get('pid', 'unknown')}, "
+        f"MCP port {session.get('mcp_port', 'unknown')})"
+    )
+    logs = session.get("logs")
+    if isinstance(logs, dict):
+        print(f"  stdout log: {logs.get('stdout')}")
+        print(f"  stderr log: {logs.get('stderr')}")
+
+
+def _print_failure(*, command: str, message: str, as_json: bool) -> None:
+    payload = {
+        "schema_version": 1,
+        "status": "error",
+        "command": command,
+        "message": message,
+    }
+    if as_json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"ERROR: {message}")

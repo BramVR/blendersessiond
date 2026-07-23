@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+import platform
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+STATE_DIR_ENV_VAR = "BLENDERSESSIOND_STATE_DIR"
 
 
 @dataclass(frozen=True)
@@ -20,7 +23,7 @@ class StateDirectoryCheck:
 
 def resolve_state_directory(
     *,
-    system: str,
+    system: str | None = None,
     environ: Mapping[str, str] | None = None,
     home: Path | None = None,
 ) -> Path:
@@ -28,10 +31,18 @@ def resolve_state_directory(
 
     environment = os.environ if environ is None else environ
     user_home = Path.home() if home is None else home
+    current_system = platform.system() if system is None else system
 
-    if system == "Darwin":
+    override = environment.get(STATE_DIR_ENV_VAR)
+    if override:
+        override_path = Path(override).expanduser()
+        if not override_path.is_absolute():
+            raise ValueError(f"{STATE_DIR_ENV_VAR} must be an absolute path.")
+        return override_path
+
+    if current_system == "Darwin":
         base = user_home / "Library" / "Application Support"
-    elif system == "Windows":
+    elif current_system == "Windows":
         local_app_data = environment.get("LOCALAPPDATA")
         base = (
             Path(local_app_data)
@@ -56,7 +67,10 @@ def check_state_directory(path: Path) -> StateDirectoryCheck:
     descriptor: int | None = None
     probe_path: str | None = None
     try:
-        path.mkdir(parents=True, exist_ok=True)
+        created = not path.exists()
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if created and os.name != "nt":
+            os.chmod(path, 0o700)
         descriptor, probe_path = tempfile.mkstemp(prefix=".doctor-", dir=path)
         os.close(descriptor)
         descriptor = None
