@@ -59,6 +59,7 @@ def discover_blender(
     which: Callable[[str], str | None] | None = None,
     globber: Callable[[str], list[str]] | None = None,
     is_file: Callable[[str], bool] | None = None,
+    can_execute: Callable[[str], bool] | None = None,
     runner: Runner | None = None,
 ) -> BlenderDiscovery:
     """Resolve Blender according to the configured source priority."""
@@ -66,6 +67,9 @@ def discover_blender(
     environment = os.environ if environ is None else environ
     expand_glob = glob.glob if globber is None else globber
     path_is_file = os.path.isfile if is_file is None else is_file
+    executable_check = (
+        (lambda path: os.access(path, os.X_OK)) if can_execute is None else can_execute
+    )
     run = subprocess.run if runner is None else runner
 
     if explicit_path:
@@ -94,6 +98,7 @@ def discover_blender(
         system=system,
         which=which,
         is_file=path_is_file,
+        can_execute=executable_check,
     )
     if path_hit:
         return _select_candidates(
@@ -270,6 +275,7 @@ def _find_on_explicit_path(
     system: str,
     which: Callable[[str], str | None] | None,
     is_file: Callable[[str], bool],
+    can_execute: Callable[[str], bool],
 ) -> str | None:
     path_module = ntpath if system == "Windows" else posixpath
     separator = ";" if system == "Windows" else os.pathsep
@@ -285,7 +291,9 @@ def _find_on_explicit_path(
     if which is None:
         for entry in entries:
             candidate = path_module.join(entry, executable_name)
-            if is_file(candidate):
+            # Windows has no execute bit; POSIX must skip non-executable
+            # files so a shadowing plain file cannot mask a later real hit.
+            if is_file(candidate) and (system == "Windows" or can_execute(candidate)):
                 return candidate
         return None
 

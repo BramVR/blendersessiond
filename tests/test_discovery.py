@@ -84,6 +84,24 @@ def test_path_probe_uses_absolute_path_hit_when_cwd_also_has_blender() -> None:
     assert result.source == "PATH"
 
 
+def test_path_probe_skips_non_executable_file_for_later_entry() -> None:
+    shadow = "/shadow/blender"
+    real = "/real/blender"
+    existing_files = {shadow, real}
+
+    result = discover_blender(
+        environ={"PATH": "/shadow:/real"},
+        system="Linux",
+        globber=lambda _pattern: [],
+        is_file=lambda path: path in existing_files,
+        can_execute=lambda path: path == real,
+        runner=runner_for({real: "4.1.0"}),
+    )
+
+    assert result.path == real
+    assert result.source == "PATH"
+
+
 def test_path_probe_rejects_current_directory_hit_not_on_path() -> None:
     cwd_hit = r"C:\untrusted\blender.exe"
     probed: list[str] = []
