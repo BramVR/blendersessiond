@@ -6,16 +6,21 @@ import argparse
 import ctypes
 import json
 import os
+import queue
 import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 SESSION_NAME = "ci-real-blender"
 CLI_TIMEOUT_SECONDS = 45
+MCP_TIMEOUT_SECONDS = 45
 PROCESS_EXIT_TIMEOUT_SECONDS = 10
 
 
@@ -98,6 +103,16 @@ def main() -> int:
             "get_scene_info did not return the expected real scene keys",
         )
 
+        mcp_scene = run_mcp_stdio_round_trip(
+            ["blendersessiond", "mcp-serve", "--name", args.name],
+            environment=environment,
+        )
+        _require(
+            {"name", "object_count", "objects", "materials_count"}
+            <= mcp_scene.keys(),
+            "MCP get_scene_info did not return the expected real scene keys",
+        )
+
         stopped = _run_cli(
             "stop",
             "--name",
@@ -135,8 +150,8 @@ def main() -> int:
         return 1
 
     print(
-        "PASS: real Blender Session start, socket Health, call get_scene_info, "
-        "stop, and Ownership verified."
+        "PASS: real Blender Session start, socket Health, direct call and MCP "
+        "stdio get_scene_info, stop, and Ownership verified."
     )
     return 0
 
@@ -227,6 +242,207 @@ def _wait_for_health(
         f"Session Health did not become healthy within {timeout:.0f}s; "
         f"last status: {last_payload}"
     )
+
+
+def run_mcp_stdio_round_trip(
+    command: Sequence[str],
+    *,
+    environment: dict[str, str],
+) -> dict[str, Any]:
+    """Run initialize, tools/list, and get_scene_info over MCP stdio."""
+
+    print(f"$ {shlex.join(command)}  # MCP stdio JSON-RPC")
+    client = _McpStdioClient(command, environment=environment)
+    failure: BaseException | None = None
+    try:
+        initialized = client.request(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "blendersessiond-real-smoke",
+                    "version": "1",
+                },
+            },
+        )
+        _require(
+            isinstance(initialized.get("protocolVersion"), str),
+            "MCP initialize response has no protocolVersion",
+        )
+        client.notify("notifications/initialized")
+
+        listed = client.request("tools/list", {})
+        tools = listed.get("tools")
+        _require(isinstance(tools, list), "MCP tools/list result has no tools list")
+        _require(
+            any(
+                isinstance(tool, dict) and tool.get("name") == "get_scene_info"
+                for tool in tools
+            ),
+            "MCP tools/list did not advertise get_scene_info",
+        )
+
+        called = client.request(
+            "tools/call",
+            {
+                "name": "get_scene_info",
+                "arguments": {"user_prompt": "blendersessiond real smoke"},
+            },
+        )
+        _require(called.get("isError") is not True, "MCP tool call reported an error")
+        content = called.get("content")
+        _require(
+            isinstance(content, list),
+            "MCP get_scene_info result has no content list",
+        )
+        text = next(
+            (
+                item.get("text")
+                for item in content
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and isinstance(item.get("text"), str)
+            ),
+            None,
+        )
+        _require(text is not None, "MCP get_scene_info result has no text content")
+        try:
+            scene = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise SmokeFailure(
+                f"MCP get_scene_info text is not scene JSON: {text!r}"
+            ) from error
+        _require(
+            isinstance(scene, dict),
+            "MCP get_scene_info scene JSON is not an object",
+        )
+        return scene
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        client.close(suppress_errors=failure is not None)
+
+
+class _McpStdioClient:
+    def __init__(
+        self,
+        command: Sequence[str],
+        *,
+        environment: dict[str, str],
+    ) -> None:
+        self._process = subprocess.Popen(
+            list(command),
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self._stdout: queue.Queue[str | None] = queue.Queue()
+        self._stderr: deque[str] = deque(maxlen=200)
+        self._next_id = 1
+        threading.Thread(target=self._read_stdout, daemon=True).start()
+        threading.Thread(target=self._read_stderr, daemon=True).start()
+
+    def request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        request_id = self._next_id
+        self._next_id += 1
+        self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params,
+            }
+        )
+        deadline = time.monotonic() + MCP_TIMEOUT_SECONDS
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise self._failure(f"MCP {method} timed out")
+            try:
+                line = self._stdout.get(timeout=remaining)
+            except queue.Empty as error:
+                raise self._failure(f"MCP {method} timed out") from error
+            if line is None:
+                raise self._failure(
+                    f"MCP server exited before answering {method}"
+                )
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise self._failure(
+                    f"MCP stdout was not JSON: {line!r}"
+                ) from error
+            if not isinstance(message, dict) or message.get("id") != request_id:
+                continue
+            error_payload = message.get("error")
+            if error_payload is not None:
+                raise self._failure(
+                    f"MCP {method} returned an error: {error_payload}"
+                )
+            result = message.get("result")
+            if not isinstance(result, dict):
+                raise self._failure(
+                    f"MCP {method} result is not an object: {result!r}"
+                )
+            return result
+
+    def notify(self, method: str) -> None:
+        self._send({"jsonrpc": "2.0", "method": method})
+
+    def close(self, *, suppress_errors: bool) -> None:
+        if self._process.stdin is not None and not self._process.stdin.closed:
+            self._process.stdin.close()
+        try:
+            return_code = self._process.wait(timeout=10)
+        except subprocess.TimeoutExpired as error:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=5)
+            if not suppress_errors:
+                raise self._failure(
+                    "MCP server did not exit after stdin closed"
+                ) from error
+            return
+        if return_code != 0 and not suppress_errors:
+            raise self._failure(f"MCP server exited {return_code}")
+
+    def _send(self, message: dict[str, Any]) -> None:
+        if self._process.stdin is None:
+            raise self._failure("MCP stdin is unavailable")
+        try:
+            self._process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+            self._process.stdin.flush()
+        except (BrokenPipeError, OSError) as error:
+            raise self._failure("MCP stdin closed unexpectedly") from error
+
+    def _read_stdout(self) -> None:
+        if self._process.stdout is None:
+            self._stdout.put(None)
+            return
+        for line in self._process.stdout:
+            self._stdout.put(line)
+        self._stdout.put(None)
+
+    def _read_stderr(self) -> None:
+        if self._process.stderr is None:
+            return
+        for line in self._process.stderr:
+            self._stderr.append(line.rstrip())
+            print(line, end="", file=sys.stderr)
+
+    def _failure(self, message: str) -> SmokeFailure:
+        details = "\n".join(self._stderr)
+        if details:
+            return SmokeFailure(f"{message}; MCP stderr tail:\n{details}")
+        return SmokeFailure(message)
 
 
 def _wait_for_owned_blender_exit(

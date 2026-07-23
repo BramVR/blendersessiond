@@ -24,6 +24,7 @@ packages = ["src/blendersessiond"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["scripts"]
 markers = [
     "e2e: CLI subprocess end-to-end tests",
     "real_blender: opt-in tests that launch an installed Blender",

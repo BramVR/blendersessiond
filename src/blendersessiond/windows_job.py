@@ -67,6 +67,8 @@ class _BasicAccountingInformation(ctypes.Structure):
 def main() -> int:
     if len(sys.argv) == 8 and sys.argv[1] == "--child":
         return _launch_child(*sys.argv[2:])
+    if len(sys.argv) >= 4 and sys.argv[1] == "--stdio-child":
+        return _launch_stdio_child(sys.argv[2], sys.argv[3:])
     if os.name != "nt" or len(sys.argv) != 6:
         return 2
     (
@@ -83,7 +85,7 @@ def main() -> int:
     launcher = None
     try:
         gate.unlink(missing_ok=True)
-        job = _create_job()
+        job = create_kill_on_close_job()
         launcher = subprocess.Popen(
             [
                 sys.executable,
@@ -103,10 +105,7 @@ def main() -> int:
             close_fds=True,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
-        if not ctypes.windll.kernel32.AssignProcessToJobObject(
-            job, launcher._handle
-        ):
-            raise ctypes.WinError()
+        assign_process(job, launcher)
         ready.touch()
         while _active_processes(job) > 0:
             time.sleep(0.1)
@@ -126,7 +125,7 @@ def main() -> int:
         gate.unlink(missing_ok=True)
         ready.unlink(missing_ok=True)
         if job is not None:
-            ctypes.windll.kernel32.CloseHandle(job)
+            close_job(job)
 
 
 def _launch_child(
@@ -140,11 +139,7 @@ def _launch_child(
     bootstrap = Path(bootstrap_name)
     try:
         gate = Path(gate_name)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and not gate.exists():
-            time.sleep(0.01)
-        if not gate.exists():
-            raise RuntimeError("Job Object assignment gate timed out")
+        _wait_for_gate(gate)
         with Path(stdout_name).open("ab", buffering=0) as stdout, Path(
             stderr_name
         ).open("ab", buffering=0) as stderr:
@@ -171,7 +166,22 @@ def _launch_child(
         return 1
 
 
-def _create_job():
+def _launch_stdio_child(gate_name: str, command: list[str]) -> int:
+    _wait_for_gate(Path(gate_name))
+    return subprocess.run(command, check=False).returncode
+
+
+def _wait_for_gate(gate: Path) -> None:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and not gate.exists():
+        time.sleep(0.01)
+    if not gate.exists():
+        raise RuntimeError("Job Object assignment gate timed out")
+
+
+def create_kill_on_close_job():
+    """Create a Job Object that terminates its processes when closed."""
+
     kernel32 = ctypes.windll.kernel32
     kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
     kernel32.CreateJobObjectW.restype = wintypes.HANDLE
@@ -208,6 +218,19 @@ def _create_job():
         kernel32.CloseHandle(job)
         raise ctypes.WinError()
     return job
+
+
+def assign_process(job, process: subprocess.Popen[bytes]) -> None:
+    """Assign a spawned process and its future descendants to a Job Object."""
+
+    if not ctypes.windll.kernel32.AssignProcessToJobObject(job, process._handle):
+        raise ctypes.WinError()
+
+
+def close_job(job) -> None:
+    """Close a Job Object handle."""
+
+    ctypes.windll.kernel32.CloseHandle(job)
 
 
 def _active_processes(job) -> int:

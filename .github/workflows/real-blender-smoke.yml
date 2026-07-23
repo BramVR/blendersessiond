@@ -141,13 +141,14 @@ jobs:
           "BLENDER_PATH=$blenderPath" | Out-File `
             -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Real Session addon round-trip smoke on Ubuntu
+      - name: Real Session addon and MCP stdio round-trip smoke on Ubuntu
         if: runner.os == 'Linux'
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           # Keep one display alive across every CLI subprocess and the detached
-          # Blender Session; this is runner plumbing, not a tool headless mode.
+          # Blender Session and mcp-serve/uvx subprocess; this is runner
+          # plumbing, not a tool headless mode.
           xvfb-run -a uv run python scripts/real_blender_smoke.py \
             --blender "$BLENDER_PATH" \
             --expected-version "$BLENDER_VERSION" \
