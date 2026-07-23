@@ -46,6 +46,8 @@ def _serve_fake_addon(port: int) -> None:
                         "name": params.get("name"),
                         "type": "MESH",
                     }
+                elif command_type == "execute_code":
+                    result = {"executed": True, "result": "false\n"}
                 else:
                     client.sendall(
                         json.dumps(
@@ -71,6 +73,13 @@ def main() -> int:
     if "--fake-child" in sys.argv:
         while True:
             time.sleep(1)
+
+    argv_file = os.environ.get("FAKE_BLENDER_ARGV_FILE")
+    if argv_file:
+        Path(argv_file).write_text(
+            json.dumps(sys.argv[1:]),
+            encoding="utf-8",
+        )
 
     if os.environ.get("FAKE_BLENDER_DISABLE_MCP_SOCKET") != "1":
         port = int(os.environ["BLENDERSESSIOND_MCP_PORT"])

@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from blendersessiond.doctor import DoctorReport, build_doctor_report
@@ -17,6 +18,7 @@ from blendersessiond.sessions import (
     call_session,
     inspect_all_sessions,
     inspect_session,
+    resolve_scene_path,
     start_session,
     stop_session,
     validate_session_name,
@@ -54,6 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--blender",
         metavar="PATH",
         help="Use this Blender executable.",
+    )
+    start.add_argument(
+        "--scene",
+        metavar="PATH",
+        type=_scene_path,
+        help="Open an existing .blend file instead of a factory-empty file.",
     )
     _add_json_argument(start)
 
@@ -122,6 +130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = start_session(
                 name=args.name,
                 explicit_blender=args.blender,
+                scene_path=args.scene,
             )
         except (
             AlreadyRunningError,
@@ -271,6 +280,13 @@ def _json_object(value: str) -> dict[str, Any]:
     return parsed
 
 
+def _scene_path(value: str) -> Path:
+    try:
+        return resolve_scene_path(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def _print_result(payload: dict[str, Any], *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(payload, indent=2))
@@ -301,6 +317,20 @@ def _print_session(session: dict[str, Any]) -> None:
     if isinstance(logs, dict):
         print(f"  stdout log: {logs.get('stdout')}")
         print(f"  stderr log: {logs.get('stderr')}")
+    if "scene_path" in session:
+        scene_path = session.get("scene_path")
+        print(
+            f"  scene: {scene_path}"
+            if isinstance(scene_path, str)
+            else "  scene: factory-empty"
+        )
+    unsaved_changes = session.get("unsaved_changes")
+    if unsaved_changes is True:
+        print("  WARNING: Session has unsaved changes.")
+    elif unsaved_changes is False:
+        print("  unsaved changes: no")
+    elif unsaved_changes == "unknown":
+        print("  unsaved changes: unknown")
     health = session.get("health")
     if isinstance(health, dict):
         process = health.get("process")

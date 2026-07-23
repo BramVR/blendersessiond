@@ -19,10 +19,12 @@ is the complete reviewable delta against the pinned upstream file:
 
 - bind the addon server explicitly to IPv4 loopback (`127.0.0.1`);
 - read the Session port from `BLENDERSESSIOND_MCP_PORT`, falling back to the
-  upstream scene/default port when unset.
-
-- sync the resolved managed port back to the scene property so the panel and
-  UI reconnect path reuse the Session's reserved port.
+  upstream scene/default port when unset;
+- avoid writing runtime port/server state into the scene for a managed Session,
+  so registering the addon does not itself create unsaved file changes. The
+  upstream scene properties remain unchanged for unmanaged addon use;
+- force server auto-start for managed Sessions even when a loaded scene saved
+  the upstream auto-start preference as disabled.
 
 Upstream auto-start remains unchanged. Re-pins require regenerating the
 documented patch and validating the real Blender round trip against the named

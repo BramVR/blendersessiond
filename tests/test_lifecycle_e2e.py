@@ -65,11 +65,13 @@ def test_start_status_stop_kills_tree_and_keeps_logs(
     session = started.payload["session"]
     assert session["name"] == "default"
     assert session["mcp_port"] == 9876
+    assert session["scene_path"] is None
     assert session["blender"]["version"] == "4.3.2"
     assert Path(session["state_dir"]).name == "default".encode("ascii").hex()
 
     status = run("status", "--name", "default")
     assert status.completed.returncode == 0
+    assert status.payload["session"]["unsaved_changes"] is False
     assert status.payload["session"]["health"] == {
         "status": "healthy",
         "process": {"status": "healthy", "alive": True},
@@ -217,9 +219,76 @@ def test_live_process_with_dead_socket_is_unhealthy_with_reason(
         {"connection-failed", "timeout"} if os.name == "nt" else {"connection-failed"}
     )
     assert socket_health["reason"] in expected_reasons
+    assert status.payload["session"]["unsaved_changes"] == "unknown"
     assert "process is alive, but its MCP addon socket is unhealthy" in (
         status.payload["session"]["message"]
     )
+    assert run("stop").completed.returncode == 0
+
+
+def test_scene_path_is_recorded_and_passed_to_fake_blender(
+    isolated_cli,
+    fake_blender: Path,
+    tmp_path: Path,
+) -> None:
+    environment, run = isolated_cli
+    scene = tmp_path / "input scene.blend"
+    scene.write_bytes(b"fake blend fixture")
+    argv_file = tmp_path / "blender-argv.json"
+    environment["FAKE_BLENDER_ARGV_FILE"] = str(argv_file)
+
+    started = run(
+        "start",
+        "--blender",
+        str(fake_blender),
+        "--scene",
+        str(scene),
+    )
+
+    assert started.completed.returncode == 0, started.completed.stderr
+    expected_scene = str(scene.absolute())
+    assert started.payload["session"]["scene_path"] == expected_scene
+    record = json.loads(
+        (Path(started.payload["session"]["state_dir"]) / "session.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert record["scene_path"] == expected_scene
+    blender_argv = json.loads(_wait_for_file(argv_file))
+    assert blender_argv == [
+        "--factory-startup",
+        expected_scene,
+        "--python",
+        str(
+            (
+                Path(__file__).parents[1]
+                / "src"
+                / "blendersessiond"
+                / "blender_bootstrap.py"
+            ).resolve()
+        ),
+    ]
+
+    status = run("status", "--name", "default")
+    assert status.payload["session"]["scene_path"] == expected_scene
+    human_status = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "blendersessiond",
+            "status",
+            "--name",
+            "default",
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert human_status.returncode == 0
+    assert f"scene: {expected_scene}" in human_status.stdout
+    assert "unsaved changes: no" in human_status.stdout
     assert run("stop").completed.returncode == 0
 
 

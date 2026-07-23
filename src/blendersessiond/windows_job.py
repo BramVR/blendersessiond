@@ -65,11 +65,11 @@ class _BasicAccountingInformation(ctypes.Structure):
 
 
 def main() -> int:
-    if len(sys.argv) == 8 and sys.argv[1] == "--child":
+    if len(sys.argv) == 9 and sys.argv[1] == "--child":
         return _launch_child(*sys.argv[2:])
     if len(sys.argv) >= 4 and sys.argv[1] == "--stdio-child":
         return _launch_stdio_child(sys.argv[2], sys.argv[3:])
-    if os.name != "nt" or len(sys.argv) != 6:
+    if os.name != "nt" or len(sys.argv) != 7:
         return 2
     (
         executable,
@@ -77,6 +77,7 @@ def main() -> int:
         stderr_name,
         bootstrap_name,
         addon_bootstrap_name,
+        scene_name,
     ) = sys.argv[1:]
     bootstrap = Path(bootstrap_name)
     gate = bootstrap.with_suffix(".gate")
@@ -98,6 +99,7 @@ def main() -> int:
                 bootstrap_name,
                 str(gate),
                 addon_bootstrap_name,
+                scene_name,
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -135,6 +137,7 @@ def _launch_child(
     bootstrap_name: str,
     gate_name: str,
     addon_bootstrap_name: str,
+    scene_name: str,
 ) -> int:
     bootstrap = Path(bootstrap_name)
     try:
@@ -143,13 +146,13 @@ def _launch_child(
         with Path(stdout_name).open("ab", buffering=0) as stdout, Path(
             stderr_name
         ).open("ab", buffering=0) as stderr:
+            # Managed Sessions isolate user preferences even when opening a scene.
+            blender_arguments = [executable, "--factory-startup"]
+            if scene_name:
+                blender_arguments.append(scene_name)
+            blender_arguments.extend(["--python", addon_bootstrap_name])
             process = subprocess.Popen(
-                [
-                    executable,
-                    "--factory-startup",
-                    "--python",
-                    addon_bootstrap_name,
-                ],
+                blender_arguments,
                 stdin=subprocess.DEVNULL,
                 stdout=stdout,
                 stderr=stderr,

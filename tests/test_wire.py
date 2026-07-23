@@ -18,6 +18,7 @@ from blendersessiond.wire import (
     WireTimeoutError,
     call_addon,
     probe_addon,
+    query_unsaved_changes,
 )
 
 
@@ -73,6 +74,36 @@ def test_health_ping_answers() -> None:
     assert probe.healthy is True
     assert probe.reason == "answered"
     assert requests == [{"type": "get_polyhaven_status", "params": {}}]
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [("false\n", False), ("true\n", True)],
+)
+def test_unsaved_changes_query_reads_blender_dirty_flag(
+    output: str,
+    expected: bool,
+) -> None:
+    response = _response({"executed": True, "result": output})
+    with scripted_addon(response) as (port, requests):
+        result = query_unsaved_changes(port)
+
+    assert result is expected
+    assert requests == [
+        {
+            "type": "execute_code",
+            "params": {
+                "code": 'print("true" if bpy.data.is_dirty else "false")'
+            },
+        }
+    ]
+
+
+def test_unsaved_changes_query_rejects_ambiguous_output() -> None:
+    response = _response({"executed": True, "result": "maybe\n"})
+    with scripted_addon(response) as (port, _requests):
+        with pytest.raises(WireProtocolError, match="unrecognized"):
+            query_unsaved_changes(port)
 
 
 def test_connection_refused() -> None:
