@@ -65,7 +65,6 @@ def discover_blender(
     """Resolve Blender according to the configured source priority."""
 
     environment = os.environ if environ is None else environ
-    find_on_path = shutil.which if which is None else which
     expand_glob = glob.glob if globber is None else globber
     path_is_file = os.path.isfile if is_file is None else is_file
     run = subprocess.run if runner is None else runner
@@ -90,7 +89,12 @@ def discover_blender(
         )
 
     executable_name = "blender.exe" if system == "Windows" else "blender"
-    path_hit = find_on_path(executable_name)
+    path_hit = _find_on_explicit_path(
+        executable_name,
+        path=environment.get("PATH", ""),
+        system=system,
+        which=which,
+    )
     if path_hit:
         return _select_candidates(
             [_absolute_path(path_hit, system)],
@@ -257,6 +261,42 @@ def _absolute_path(path: str, system: str) -> str:
     expanded = os.path.expanduser(path)
     path_module = ntpath if system == "Windows" else posixpath
     return path_module.abspath(expanded)
+
+
+def _find_on_explicit_path(
+    executable_name: str,
+    *,
+    path: str,
+    system: str,
+    which: Callable[[str], str | None] | None,
+) -> str | None:
+    path_module = ntpath if system == "Windows" else posixpath
+    separator = ";" if system == "Windows" else os.pathsep
+    # Empty and relative entries implicitly trust the current directory.
+    entries = [
+        path_module.normpath(entry)
+        for entry in path.split(separator)
+        if entry and path_module.isabs(entry)
+    ]
+    if not entries:
+        return None
+
+    safe_path = separator.join(entries)
+    path_hit = (
+        shutil.which(executable_name, path=safe_path)
+        if which is None
+        else which(executable_name)
+    )
+    if not path_hit:
+        return None
+
+    allowed_parents = {
+        path_module.normcase(path_module.abspath(entry)) for entry in entries
+    }
+    hit_parent = path_module.normcase(
+        path_module.dirname(path_module.abspath(path_hit))
+    )
+    return path_hit if hit_parent in allowed_parents else None
 
 
 def _deduplicate(paths: Sequence[str]) -> list[str]:

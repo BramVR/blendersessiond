@@ -55,7 +55,7 @@ def test_environment_wins_over_path() -> None:
 def test_path_hit_is_used_before_standard_locations() -> None:
     path_hit = "/tools/blender"
     result = discover_blender(
-        environ={},
+        environ={"PATH": "/tools"},
         system="Linux",
         which=lambda _name: path_hit,
         globber=lambda _pattern: ["/opt/blender-9.0/blender"],
@@ -65,6 +65,28 @@ def test_path_hit_is_used_before_standard_locations() -> None:
 
     assert result.path == path_hit
     assert result.source == "PATH"
+
+
+def test_path_probe_rejects_current_directory_hit_not_on_path() -> None:
+    cwd_hit = r"C:\untrusted\blender.exe"
+    probed: list[str] = []
+
+    def run(command, **_kwargs):
+        probed.append(command[0])
+        return Completed(stdout="Blender 4.3.0\n")
+
+    result = discover_blender(
+        environ={"PATH": r"C:\trusted"},
+        system="Windows",
+        which=lambda _name: cwd_hit,
+        globber=lambda _pattern: [],
+        is_file=lambda path: path == cwd_hit,
+        runner=run,
+    )
+
+    assert result.path is None
+    assert result.source is None
+    assert probed == []
 
 
 @pytest.mark.parametrize(
