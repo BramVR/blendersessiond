@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import os
 import platform
+import sys
 import time
 from pathlib import Path
 
 import pytest
+from real_blender_smoke import run_mcp_stdio_round_trip
 
 from blendersessiond.discovery import discover_blender
 
@@ -91,6 +93,22 @@ def test_real_blender_start_status_stop_round_trip(
             "objects",
             "materials_count",
         } <= scene.payload.keys()
+
+        mcp_scene = run_mcp_stdio_round_trip(
+            [
+                sys.executable,
+                "-m",
+                "blendersessiond",
+                "mcp-serve",
+            ],
+            environment=environment,
+        )
+        assert {
+            "name",
+            "object_count",
+            "objects",
+            "materials_count",
+        } <= mcp_scene.keys()
 
         cube = run(
             "call",

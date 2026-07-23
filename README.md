@@ -67,6 +67,42 @@ socket is unhealthy with separate process and socket details in `status` and
 Session, sends the raw BlenderMCP addon command, and prints its JSON result.
 Addon-reported errors are printed on stderr and exit 1.
 
+## MCP client registration
+
+Register the default Session once in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "blender": {
+      "command": "blendersessiond",
+      "args": ["mcp-serve"]
+    }
+  }
+}
+```
+
+Start the Session before the MCP client launches the server:
+
+```console
+blendersessiond start
+```
+
+For a named Session, add its name to the registration:
+
+```json
+"args": ["mcp-serve", "--name", "second"]
+```
+
+`mcp-serve` verifies that the named Session is healthy, sets
+`BLENDER_HOST=127.0.0.1` and its dynamic `BLENDER_PORT`, then replaces itself
+with the stock `uvx blender-mcp` stdio server. It requires
+[uv/uvx](https://docs.astral.sh/uv/) on `PATH`.
+
+Use one MCP client per Session. The addon protocol supports only one client;
+`mcp-serve` deliberately does not multiplex. To use two Sessions concurrently,
+give each its own MCP registration and `--name`.
+
 Set `BLENDERSESSIOND_STATE_DIR` to an absolute path to override the platform
 data directory. This is intended for isolated automation and tests:
 

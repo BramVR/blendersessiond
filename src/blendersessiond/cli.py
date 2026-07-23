@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from blendersessiond.doctor import DoctorReport, build_doctor_report
+from blendersessiond.mcp_serve import McpServeError, serve_mcp
 from blendersessiond.sessions import (
     DEFAULT_SESSION_NAME,
     AlreadyRunningError,
@@ -88,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Command parameters as a JSON object (default: {}).",
     )
     _add_json_argument(call)
+
+    mcp_serve = commands.add_parser(
+        "mcp-serve",
+        help="Serve MCP stdio for one healthy Session.",
+    )
+    _add_name_argument(mcp_serve)
     return parser
 
 
@@ -209,6 +216,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(json.dumps(result, indent=2))
         return 0
+
+    if args.command == "mcp-serve":
+        try:
+            return serve_mcp(name=args.name)
+        except (McpServeError, OSError, RuntimeError, ValueError) as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            return 1
 
     raise AssertionError(f"unhandled command: {args.command}")
 
