@@ -2834,6 +2834,11 @@ def register():
         port = 9876
         auto_start = True
     port = int(os.environ.get("BLENDERSESSIOND_MCP_PORT", port))
+    if scene is not None:
+        try:
+            scene.blendermcp_port = port
+        except AttributeError:
+            pass
 
     if auto_start and (not hasattr(bpy.types, "blendermcp_server") or not bpy.types.blendermcp_server):
         bpy.types.blendermcp_server = BlenderMCPServer(port=port)

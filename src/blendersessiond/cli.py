@@ -202,7 +202,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 name=args.name,
             )
         except (SessionError, WireError, OSError, RuntimeError, ValueError) as error:
-            print(f"ERROR: {error}", file=sys.stderr)
+            if args.json:
+                _print_failure(command="call", message=str(error), as_json=True)
+            else:
+                print(f"ERROR: {error}", file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2))
         return 0
