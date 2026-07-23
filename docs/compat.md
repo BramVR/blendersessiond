@@ -7,8 +7,10 @@ The pinned source URL is:
 
 `https://github.com/ahujasid/blender-mcp/blob/da4e16d2069ce5154eaa2535bf995e843caf5c73/addon.py`
 
-The vendored copy is validated against `blender-mcp` server version `1.6.4`,
-as resolved from PyPI by `uvx blender-mcp` on 2026-07-23.
+The validated server requirement is defined by
+[`VALIDATED_SERVER_REQUIREMENT`](../src/blendersessiond/mcp_serve.py), currently
+`blender-mcp==1.6.4`. `mcp-serve` passes that explicit requirement to `uvx`, so
+the validated version is used even when another `blender-mcp` tool is installed.
 
 ## Local patch
 

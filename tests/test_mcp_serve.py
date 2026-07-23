@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from blendersessiond import mcp_serve, windows_job
 from blendersessiond.processes import process_start_time, terminate_owned_tree
 
 pytestmark = pytest.mark.e2e
@@ -212,15 +213,120 @@ def test_named_sessions_exec_uvx_with_their_own_ports_and_stdio(
 
     assert records == {
         "first": {
-            "argv": ["blender-mcp"],
+            "argv": ["blender-mcp==1.6.4"],
             "host": "127.0.0.1",
             "port": str(first.payload["session"]["mcp_port"]),
         },
         "second": {
-            "argv": ["blender-mcp"],
+            "argv": ["blender-mcp==1.6.4"],
             "host": "127.0.0.1",
             "port": str(second.payload["session"]["mcp_port"]),
         },
     }
     assert run("stop", "--name", "first").completed.returncode == 0
     assert run("stop", "--name", "second").completed.returncode == 0
+
+
+def test_windows_runner_assigns_child_to_kill_on_close_job(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events = []
+    job = object()
+    gate = tmp_path / "assigned"
+
+    class FakeProcess:
+        def wait(self) -> int:
+            assert gate.exists()
+            events.append("wait")
+            return 23
+
+    process = FakeProcess()
+
+    class FakeTemporaryDirectory:
+        def __enter__(self) -> str:
+            return str(tmp_path)
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        mcp_serve.tempfile,
+        "TemporaryDirectory",
+        lambda **kwargs: FakeTemporaryDirectory(),
+    )
+    monkeypatch.setattr(
+        mcp_serve.windows_job,
+        "create_kill_on_close_job",
+        lambda: events.append("create") or job,
+    )
+    monkeypatch.setattr(
+        mcp_serve.subprocess,
+        "Popen",
+        lambda command, **kwargs: (
+            events.append(("spawn", command, kwargs)) or process
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_serve.windows_job,
+        "assign_process",
+        lambda assigned_job, assigned_process: events.append(
+            ("assign", assigned_job, assigned_process)
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_serve.windows_job,
+        "close_job",
+        lambda closed_job: events.append(("close", closed_job)),
+    )
+    environment = {"PATH": "test-path"}
+
+    returncode = mcp_serve._run_in_windows_job(["uvx", "requirement"], environment)
+
+    assert returncode == 23
+    assert events == [
+        "create",
+        (
+            "spawn",
+            [
+                sys.executable,
+                "-m",
+                "blendersessiond.windows_job",
+                "--stdio-child",
+                str(gate),
+                "uvx",
+                "requirement",
+            ],
+            {"env": environment},
+        ),
+        ("assign", job, process),
+        "wait",
+        ("close", job),
+    ]
+
+
+def test_windows_stdio_launcher_inherits_stdio_and_propagates_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gate = tmp_path / "assigned"
+    gate.touch()
+    calls = []
+
+    class Completed:
+        returncode = 17
+
+    monkeypatch.setattr(
+        windows_job.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or Completed(),
+    )
+
+    returncode = windows_job._launch_stdio_child(
+        str(gate), ["uvx", "blender-mcp==1.6.4"]
+    )
+
+    assert returncode == 17
+    assert calls == [
+        (["uvx", "blender-mcp==1.6.4"], {"check": False}),
+    ]
