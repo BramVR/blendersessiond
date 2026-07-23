@@ -278,7 +278,8 @@ def _find_on_explicit_path(
     can_execute: Callable[[str], bool],
 ) -> str | None:
     path_module = ntpath if system == "Windows" else posixpath
-    separator = ";" if system == "Windows" else os.pathsep
+    # Separator follows the simulated system, never the host (os.pathsep).
+    separator = ";" if system == "Windows" else ":"
     # Empty and relative entries implicitly trust the current directory.
     entries = [
         path_module.normpath(entry)
