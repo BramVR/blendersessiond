@@ -67,6 +67,23 @@ def test_path_hit_is_used_before_standard_locations() -> None:
     assert result.source == "PATH"
 
 
+def test_path_probe_uses_absolute_path_hit_when_cwd_also_has_blender() -> None:
+    cwd_hit = r"C:\untrusted\blender.exe"
+    path_hit = r"C:\trusted\blender.exe"
+    existing_files = {cwd_hit, path_hit}
+
+    result = discover_blender(
+        environ={"PATH": r"C:\trusted"},
+        system="Windows",
+        globber=lambda _pattern: [],
+        is_file=lambda path: path in existing_files,
+        runner=runner_for({path_hit: "4.3.0"}),
+    )
+
+    assert result.path == path_hit
+    assert result.source == "PATH"
+
+
 def test_path_probe_rejects_current_directory_hit_not_on_path() -> None:
     cwd_hit = r"C:\untrusted\blender.exe"
     probed: list[str] = []

@@ -7,7 +7,6 @@ import ntpath
 import os
 import posixpath
 import re
-import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -94,6 +93,7 @@ def discover_blender(
         path=environment.get("PATH", ""),
         system=system,
         which=which,
+        is_file=path_is_file,
     )
     if path_hit:
         return _select_candidates(
@@ -269,6 +269,7 @@ def _find_on_explicit_path(
     path: str,
     system: str,
     which: Callable[[str], str | None] | None,
+    is_file: Callable[[str], bool],
 ) -> str | None:
     path_module = ntpath if system == "Windows" else posixpath
     separator = ";" if system == "Windows" else os.pathsep
@@ -281,12 +282,14 @@ def _find_on_explicit_path(
     if not entries:
         return None
 
-    safe_path = separator.join(entries)
-    path_hit = (
-        shutil.which(executable_name, path=safe_path)
-        if which is None
-        else which(executable_name)
-    )
+    if which is None:
+        for entry in entries:
+            candidate = path_module.join(entry, executable_name)
+            if is_file(candidate):
+                return candidate
+        return None
+
+    path_hit = which(executable_name)
     if not path_hit:
         return None
 
