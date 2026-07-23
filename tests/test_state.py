@@ -1,8 +1,14 @@
+import os
 from pathlib import Path
+from stat import S_IMODE
 
 import pytest
 
-from blendersessiond.state import check_state_directory, resolve_state_directory
+from blendersessiond.state import (
+    STATE_DIR_ENV_VAR,
+    check_state_directory,
+    resolve_state_directory,
+)
 
 
 @pytest.mark.parametrize(
@@ -56,6 +62,23 @@ def test_relative_xdg_state_home_falls_back_to_default(tmp_path: Path) -> None:
     ) == tmp_path / ".local" / "state" / "blendersessiond"
 
 
+def test_explicit_state_directory_override_is_honored(tmp_path: Path) -> None:
+    override = tmp_path / "isolated"
+
+    assert resolve_state_directory(
+        system="Darwin",
+        environ={STATE_DIR_ENV_VAR: str(override)},
+    ) == override
+
+
+def test_state_directory_override_must_be_absolute() -> None:
+    with pytest.raises(ValueError, match="must be an absolute path"):
+        resolve_state_directory(
+            system="Linux",
+            environ={STATE_DIR_ENV_VAR: "relative"},
+        )
+
+
 def test_state_directory_writability_probe(tmp_path: Path) -> None:
     state_path = tmp_path / "state"
 
@@ -64,3 +87,15 @@ def test_state_directory_writability_probe(tmp_path: Path) -> None:
     assert result.passed is True
     assert state_path.is_dir()
     assert list(state_path.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not honor POSIX modes")
+def test_existing_override_permissions_are_not_changed(tmp_path: Path) -> None:
+    state_path = tmp_path / "caller-owned"
+    state_path.mkdir(mode=0o755)
+    state_path.chmod(0o755)
+
+    result = check_state_directory(state_path)
+
+    assert result.passed is True
+    assert S_IMODE(state_path.stat().st_mode) == 0o755

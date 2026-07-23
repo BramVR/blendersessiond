@@ -42,6 +42,37 @@ The JSON report is versioned and stable within `schema_version: 1`:
 
 When Blender is unavailable, its `path`, `version`, and `source` are `null`.
 
+## Session lifecycle
+
+```console
+uv run blendersessiond start
+uv run blendersessiond start --name second --blender /path/to/blender
+uv run blendersessiond status
+uv run blendersessiond status --name second --json
+uv run blendersessiond stop --name second
+```
+
+The default Session Name is `default`. Each Session has its own directory,
+record, stdout/stderr logs, and reserved MCP port beginning at 9876. `stop`
+terminates the owned process tree without saving and removes the record; logs
+remain. At this slice, Session Health reports the process separately from the
+socket, whose status is `not-configured`.
+
+Set `BLENDERSESSIOND_STATE_DIR` to an absolute path to override the platform
+data directory. This is intended for isolated automation and tests:
+
+```console
+BLENDERSESSIOND_STATE_DIR=/tmp/my-run uv run blendersessiond status --json
+```
+
+The fake-Blender lifecycle e2e tests run in the normal test suite. Real Blender
+tests are opt-in, require a resolvable Blender binary, verify PATH discovery,
+isolate their state, and always stop Sessions they started:
+
+```console
+BLENDERSESSIOND_REAL_E2E=1 uv run pytest -m real_blender
+```
+
 - Ubiquitous language: [CONTEXT.md](CONTEXT.md)
 - Decisions: [docs/adr/](docs/adr/)
 - v1 scope and plan: [PRD issue #1](https://github.com/BramVR/blendersessiond/issues/1)
