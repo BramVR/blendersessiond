@@ -1,3 +1,5 @@
+![blendersessiond: agent-controlled local Blender Sessions](docs/assets/blendersessiond-header.png)
+
 # blendersessiond
 
 `blendersessiond` launches and owns local GUI Blender Sessions for agent
