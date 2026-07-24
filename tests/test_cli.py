@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -53,3 +54,49 @@ def test_call_rejects_non_object_params() -> None:
         cli.main(["call", "get_scene_info", "--params", "[]"])
 
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("scene_name", "create_file", "message"),
+    [
+        ("missing.blend", False, "Scene file does not exist"),
+        ("not-a-blend.txt", True, "Scene path must end in .blend"),
+    ],
+)
+def test_start_rejects_invalid_scene_as_usage_error_without_state(
+    tmp_path: Path,
+    fake_blender: Path,
+    scene_name: str,
+    create_file: bool,
+    message: str,
+) -> None:
+    state_root = tmp_path / "state"
+    scene = tmp_path / scene_name
+    if create_file:
+        scene.write_bytes(b"not a blend")
+    environment = dict(os.environ)
+    environment[STATE_DIR_ENV_VAR] = str(state_root)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "blendersessiond",
+            "start",
+            "--blender",
+            str(fake_blender),
+            "--scene",
+            str(scene),
+            "--json",
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert message in completed.stderr
+    assert not state_root.exists()

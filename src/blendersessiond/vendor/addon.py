@@ -2833,8 +2833,11 @@ def register():
     else:
         port = 9876
         auto_start = True
+    managed_session = "BLENDERSESSIOND_MCP_PORT" in os.environ
+    if managed_session:
+        auto_start = True
     port = int(os.environ.get("BLENDERSESSIOND_MCP_PORT", port))
-    if scene is not None:
+    if scene is not None and not managed_session:
         try:
             scene.blendermcp_port = port
         except AttributeError:
@@ -2844,10 +2847,11 @@ def register():
         bpy.types.blendermcp_server = BlenderMCPServer(port=port)
     if auto_start and not bpy.types.blendermcp_server.running:
         bpy.types.blendermcp_server.start()
-        try:
-            bpy.context.scene.blendermcp_server_running = bpy.types.blendermcp_server.running
-        except AttributeError:
-            pass
+        if not managed_session:
+            try:
+                bpy.context.scene.blendermcp_server_running = bpy.types.blendermcp_server.running
+            except AttributeError:
+                pass
 
     print("BlenderMCP addon registered")
 

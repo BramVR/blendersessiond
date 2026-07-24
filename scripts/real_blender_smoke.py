@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import json
 import os
 import queue
@@ -50,6 +51,8 @@ def main() -> int:
     stop_succeeded = False
     session_logs: set[Path] = set()
     try:
+        scene_fixture = _generate_scene_fixture(blender, state_dir)
+        fixture_hash = _file_hash(scene_fixture)
         baseline_pids = _blender_process_ids(blender)
         start_attempted = True
         started = _run_cli(
@@ -58,6 +61,8 @@ def main() -> int:
             args.name,
             "--blender",
             str(blender),
+            "--scene",
+            str(scene_fixture),
             "--json",
             environment=environment,
             expected_codes={0},
@@ -82,7 +87,16 @@ def main() -> int:
             timeout=args.health_timeout,
             environment=environment,
         )
-        session_logs.update(_log_paths(_dict_field(healthy, "session")))
+        healthy_session = _dict_field(healthy, "session")
+        session_logs.update(_log_paths(healthy_session))
+        _require(
+            _same_path(healthy_session.get("scene_path"), scene_fixture),
+            "status did not report the fixture scene path",
+        )
+        _require(
+            healthy_session.get("unsaved_changes") is False,
+            "fresh fixture Session did not report unsaved_changes=false",
+        )
         active_blender_pids = _blender_process_ids(blender)
         _require(
             blender_pid in active_blender_pids - baseline_pids,
@@ -102,6 +116,15 @@ def main() -> int:
             {"name", "object_count", "objects", "materials_count"} <= scene.keys(),
             "get_scene_info did not return the expected real scene keys",
         )
+        _require(
+            scene.get("name") == "Slice6FixtureScene",
+            "get_scene_info did not report the fixture scene",
+        )
+        _require(
+            _scene_object_names(scene)
+            == {"Slice6FixtureAnchor", "Slice6FixtureCube"},
+            "get_scene_info did not report the fixture object set",
+        )
 
         mcp_scene = run_mcp_stdio_round_trip(
             ["blendersessiond", "mcp-serve", "--name", args.name],
@@ -111,6 +134,43 @@ def main() -> int:
             {"name", "object_count", "objects", "materials_count"}
             <= mcp_scene.keys(),
             "MCP get_scene_info did not return the expected real scene keys",
+        )
+        _require(
+            _scene_object_names(mcp_scene)
+            == {"Slice6FixtureAnchor", "Slice6FixtureCube"},
+            "MCP get_scene_info did not report the fixture object set",
+        )
+
+        # A low-level data-API poke never marks the file dirty (Blender's own
+        # asterisk behaves the same); push an undo step like an interactive
+        # edit so bpy.data.is_dirty flips.
+        mutation = (
+            "obj = bpy.data.objects.new('Slice6UnsavedObject', None)\n"
+            "bpy.context.scene.collection.objects.link(obj)\n"
+            "bpy.ops.ed.undo_push(message='add Slice6UnsavedObject')"
+        )
+        _run_cli(
+            "call",
+            "execute_code",
+            "--name",
+            args.name,
+            "--params",
+            json.dumps({"code": mutation}),
+            environment=environment,
+            expected_codes={0},
+            versioned=False,
+        )
+        dirty = _run_cli(
+            "status",
+            "--name",
+            args.name,
+            "--json",
+            environment=environment,
+            expected_codes={0},
+        )
+        _require(
+            _dict_field(dirty, "session").get("unsaved_changes") is True,
+            "mutated Session did not report unsaved_changes=true",
         )
 
         stopped = _run_cli(
@@ -123,6 +183,10 @@ def main() -> int:
         )
         _require(stopped.get("status") == "stopped", "stop did not report stopped")
         stop_succeeded = True
+        _require(
+            _file_hash(scene_fixture) == fixture_hash,
+            "stop saved or otherwise changed the fixture .blend bytes",
+        )
 
         gone = _run_cli(
             "status",
@@ -150,8 +214,9 @@ def main() -> int:
         return 1
 
     print(
-        "PASS: real Blender Session start, socket Health, direct call and MCP "
-        "stdio get_scene_info, stop, and Ownership verified."
+        "PASS: real Blender fixture opened, direct and MCP scene info verified, "
+        "unsaved changes surfaced, stop preserved fixture bytes, and Ownership "
+        "verified."
     )
     return 0
 
@@ -204,6 +269,52 @@ def _run_cli(
             f"CLI exited {completed.returncode}; expected {sorted(expected_codes)}"
         )
     return payload
+
+
+def _generate_scene_fixture(blender: Path, state_dir: Path) -> Path:
+    fixture = state_dir.parent / f"{state_dir.name}-slice6-scene.blend"
+    generator = Path(__file__).with_name("generate_scene_fixture.py")
+    command = [
+        str(blender),
+        "--background",
+        "--factory-startup",
+        "--python",
+        str(generator),
+        "--",
+        str(fixture),
+    ]
+    print(f"$ {shlex.join(command)}")
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=CLI_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if completed.stdout:
+        print(completed.stdout.rstrip())
+    if completed.stderr:
+        print(completed.stderr.rstrip(), file=sys.stderr)
+    if completed.returncode != 0 or not fixture.is_file():
+        raise SmokeFailure(
+            f"fixture generation failed with exit code {completed.returncode}"
+        )
+    return fixture.resolve()
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _scene_object_names(scene: dict[str, Any]) -> set[str]:
+    objects = scene.get("objects")
+    if not isinstance(objects, list):
+        raise SmokeFailure("scene objects field is not a list")
+    return {
+        item["name"]
+        for item in objects
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
 
 
 def _wait_for_health(

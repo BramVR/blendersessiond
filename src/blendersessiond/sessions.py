@@ -24,7 +24,12 @@ from blendersessiond.processes import (
     wait_for_process_start_time,
 )
 from blendersessiond.state import resolve_state_directory
-from blendersessiond.wire import call_addon, probe_addon
+from blendersessiond.wire import (
+    WireError,
+    call_addon,
+    probe_addon,
+    query_unsaved_changes,
+)
 
 DEFAULT_SESSION_NAME = "default"
 BASE_MCP_PORT = 9876
@@ -62,6 +67,7 @@ class SessionRecord:
     owner_token: str
     controller_pid: int
     controller_start_time: str
+    scene_path: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +85,7 @@ class SessionRecord:
             },
             "state_dir": self.state_dir,
             "started_at": self.started_at,
+            "scene_path": self.scene_path,
         }
 
 
@@ -98,6 +105,7 @@ class SessionInspection:
     socket_message: str = (
         "Socket Health was not checked because the process is not alive."
     )
+    unsaved_changes: bool | str = "unknown"
 
     @property
     def healthy(self) -> bool:
@@ -112,6 +120,7 @@ class SessionInspection:
         result["status"] = self.status
         result["message"] = self.message
         result["reclaimable"] = self.reclaimable
+        result["unsaved_changes"] = self.unsaved_changes
         result["health"] = {
             "status": "healthy" if self.healthy else "unhealthy",
             "process": {
@@ -181,6 +190,22 @@ def validate_session_name(name: str) -> str:
     return name
 
 
+def resolve_scene_path(scene_path: str | Path) -> Path:
+    """Validate and absolutize a requested Blender scene path."""
+
+    candidate = Path(scene_path).expanduser()
+    if candidate.suffix.lower() != ".blend":
+        raise ValueError(
+            f"Scene path must end in .blend: {candidate}."
+        )
+    absolute = candidate.absolute()
+    if not absolute.exists():
+        raise ValueError(f"Scene file does not exist: {absolute}.")
+    if not absolute.is_file():
+        raise ValueError(f"Scene path is not a file: {absolute}.")
+    return absolute
+
+
 def session_directory(state_root: Path, name: str) -> Path:
     validated = validate_session_name(name)
     return state_root / "sessions" / validated.encode("ascii").hex()
@@ -190,12 +215,16 @@ def start_session(
     *,
     name: str = DEFAULT_SESSION_NAME,
     explicit_blender: str | None = None,
+    scene_path: str | Path | None = None,
     state_root: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> StartResult:
     """Start and record an owned Blender Session."""
 
     validate_session_name(name)
+    resolved_scene = (
+        resolve_scene_path(scene_path) if scene_path is not None else None
+    )
     environment = dict(os.environ if environ is None else environ)
     root = (
         resolve_state_directory(environ=environment)
@@ -240,6 +269,7 @@ def start_session(
                 blender=blender,
                 port=port,
                 environment=environment,
+                scene_path=resolved_scene,
             )
 
     if reclaimed:
@@ -396,6 +426,7 @@ def _launch_and_record(
     blender: BlenderDiscovery,
     port: int,
     environment: dict[str, str],
+    scene_path: Path | None,
 ) -> SessionRecord:
     if blender.path is None or blender.version is None:
         raise AssertionError("Blender must be resolved before launch")
@@ -426,6 +457,7 @@ def _launch_and_record(
                 environ=process_environment,
                 bootstrap_path=bootstrap_path,
                 addon_bootstrap_path=addon_bootstrap_path,
+                scene_path=scene_path,
             )
         else:
             gate_path.unlink(missing_ok=True)
@@ -441,6 +473,7 @@ def _launch_and_record(
                     gate_path=gate_path,
                     bootstrap_path=bootstrap_path,
                     addon_bootstrap_path=addon_bootstrap_path,
+                    scene_path=scene_path,
                 )
             controller_pid = process.pid
 
@@ -462,6 +495,7 @@ def _launch_and_record(
             owner_token=owner_token,
             controller_pid=controller_pid,
             controller_start_time=controller_start_time,
+            scene_path=str(scene_path) if scene_path is not None else None,
         )
         _atomic_write_json(directory / _OWNERSHIP_FILE, {"token": owner_token})
         _atomic_write_json(directory / _LAUNCHING_FILE, asdict(provisional))
@@ -498,6 +532,7 @@ def _launch_and_record(
             owner_token=owner_token,
             controller_pid=controller_pid,
             controller_start_time=controller_start_time,
+            scene_path=str(scene_path) if scene_path is not None else None,
         )
         _atomic_write_json(directory / _OWNERSHIP_FILE, {"token": owner_token})
         _atomic_write_json(directory / _RECORD_FILE, asdict(record))
@@ -623,8 +658,14 @@ def _inspect_unlocked(state_root: Path, name: str) -> SessionInspection:
             record,
             True,
         )
+    unsaved_changes: bool | str = "unknown"
     with file_lock(directory / ".wire.lock"):
         probe = probe_addon(record.mcp_port)
+        if probe.healthy:
+            try:
+                unsaved_changes = query_unsaved_changes(record.mcp_port)
+            except WireError:
+                pass
     if probe.healthy:
         return SessionInspection(
             name,
@@ -637,6 +678,7 @@ def _inspect_unlocked(state_root: Path, name: str) -> SessionInspection:
             "healthy",
             probe.reason,
             probe.message,
+            unsaved_changes,
         )
     return SessionInspection(
         name,
@@ -652,6 +694,7 @@ def _inspect_unlocked(state_root: Path, name: str) -> SessionInspection:
         "unhealthy",
         probe.reason,
         probe.message,
+        unsaved_changes,
     )
 
 
@@ -716,7 +759,13 @@ def _read_record(path: Path) -> SessionRecord:
         raise ValueError("pid fields must be positive")
     if not 1 <= payload["mcp_port"] <= 65535:
         raise ValueError("mcp_port is outside the valid port range")
-    return SessionRecord(**{key: payload[key] for key in required})
+    scene_path = payload.get("scene_path")
+    if scene_path is not None and not isinstance(scene_path, str):
+        raise ValueError("field 'scene_path' is invalid")
+    return SessionRecord(
+        **{key: payload[key] for key in required},
+        scene_path=scene_path,
+    )
 
 
 def _read_json(path: Path) -> dict[str, Any]:

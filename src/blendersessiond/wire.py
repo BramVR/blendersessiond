@@ -20,6 +20,7 @@ DEFAULT_READ_TIMEOUT_SECONDS = MAX_READ_TIMEOUT_SECONDS
 HEALTH_CONNECT_TIMEOUT_SECONDS = 0.5
 HEALTH_READ_TIMEOUT_SECONDS = 2.0
 _RECEIVE_CHUNK_BYTES = 8192
+_UNSAVED_CHANGES_CODE = 'print("true" if bpy.data.is_dirty else "false")'
 
 
 class WireError(RuntimeError):
@@ -158,6 +159,35 @@ def probe_addon(port: int, *, attempts: int = 2) -> HealthProbe:
         healthy=False,
         reason=last_error.reason,
         message=str(last_error),
+    )
+
+
+def query_unsaved_changes(port: int) -> bool:
+    """Read Blender's live file-dirty flag through the existing command surface."""
+
+    result = call_addon(
+        port,
+        "execute_code",
+        {"code": _UNSAVED_CHANGES_CODE},
+        connect_timeout=HEALTH_CONNECT_TIMEOUT_SECONDS,
+        read_timeout=HEALTH_READ_TIMEOUT_SECONDS,
+    )
+    if not isinstance(result, dict) or result.get("executed") is not True:
+        raise WireProtocolError(
+            "Addon returned an invalid unsaved-changes query result."
+        )
+    output = result.get("result")
+    if not isinstance(output, str):
+        raise WireProtocolError(
+            "Addon returned an invalid unsaved-changes query output."
+        )
+    normalized = output.strip()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise WireProtocolError(
+        "Addon returned an unrecognized unsaved-changes query output."
     )
 
 
