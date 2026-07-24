@@ -1,6 +1,7 @@
 ![blendersessiond: agent-controlled local Blender Sessions](https://raw.githubusercontent.com/BramVR/blendersessiond/main/docs/assets/blendersessiond-header.png)
 
 <p align="center">
+  <a href="https://blendersessiond.bramvanrompuy.be/"><img src="https://img.shields.io/badge/website-blendersessiond.bramvanrompuy.be-64F2B8?style=for-the-badge" alt="blendersessiond website"></a>
   <a href="https://pypi.org/project/blendersessiond/"><img src="https://img.shields.io/pypi/v/blendersessiond?style=for-the-badge&amp;label=PyPI" alt="PyPI version"></a>
   <a href="https://github.com/BramVR/blendersessiond/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/BramVR/blendersessiond/ci.yml?branch=main&amp;style=for-the-badge&amp;label=CI" alt="CI status"></a>
   <a href="https://github.com/BramVR/blendersessiond/actions/workflows/real-blender-smoke.yml"><img src="https://img.shields.io/github/actions/workflow/status/BramVR/blendersessiond/real-blender-smoke.yml?branch=main&amp;style=for-the-badge&amp;label=Blender%20smoke" alt="Real Blender smoke status"></a>
@@ -253,6 +254,30 @@ uv run pytest -m real_blender
 
 CI runs unit and fake-Blender lifecycle tests on macOS, Windows, and Linux,
 plus a pinned real-Blender round trip.
+
+## Website
+
+The public project website is
+[`blendersessiond.bramvanrompuy.be`](https://blendersessiond.bramvanrompuy.be/).
+The project website is a dependency-free static build from [`website/`](website/).
+Its visual source is the ImageGen concept in
+[`docs/assets/website-concept.png`](docs/assets/website-concept.png), derived
+from the project header artwork.
+Build and check it locally with:
+
+```console
+node scripts/build-site.mjs
+node scripts/check-site.mjs
+python3 -m http.server --directory dist/site 8000
+```
+
+GitHub Pages publishes `dist/site` through
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml). The custom
+subdomain uses a DNS `CNAME` record from `blendersessiond.bramvanrompuy.be` to
+`BramVR.github.io`; GitHub Actions Pages does not require a repository `CNAME`
+file. Search-discovery files include `robots.txt`, `sitemap.xml`, structured
+project metadata, and an experimental
+[`llms.txt`](https://blendersessiond.bramvanrompuy.be/llms.txt) summary.
 
 ## Reference
 

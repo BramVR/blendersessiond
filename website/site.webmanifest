@@ -1,0 +1,16 @@
+{
+  "name": "blendersessiond",
+  "short_name": "blendersessiond",
+  "description": "Local Blender Sessions for AI agent workflows.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050d17",
+  "theme_color": "#050d17",
+  "icons": [
+    {
+      "src": "assets/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
