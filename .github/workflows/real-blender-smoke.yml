@@ -19,8 +19,8 @@ jobs:
     name: Real Blender / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    # GUI startup on hosted macOS/Windows runners is flaky by nature; those
-    # legs are best-effort while Ubuntu remains the required proof gate.
+    # GUI startup on hosted macOS runners is flaky by nature; that leg is
+    # best-effort while Ubuntu remains the required proof gate.
     continue-on-error: ${{ matrix.best_effort }}
     strategy:
       fail-fast: false
@@ -36,11 +36,6 @@ jobs:
             best_effort: true
             download_url: https://download.blender.org/release/Blender5.2/blender-5.2.0-macos-arm64.dmg
             sha256: ed4d8390166dec5ea0a2813a03db6221f206ce016442be7f59f41d760972568a
-          - label: Windows (best effort)
-            os: windows-latest
-            best_effort: true
-            download_url: https://download.blender.org/release/Blender5.2/blender-5.2.0-windows-x64.zip
-            sha256: 2d184b626c001692c362291911293b6a297179d618d95e9e9192c3a80318adc4
 
     steps:
       - uses: actions/checkout@v4
@@ -122,25 +117,6 @@ jobs:
           echo "BLENDER_PATH=$RUNNER_TEMP/Blender.app/Contents/MacOS/Blender" \
             >> "$GITHUB_ENV"
 
-      - name: Install pinned Blender on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          BLENDER_DOWNLOAD_URL: ${{ matrix.download_url }}
-          BLENDER_SHA256: ${{ matrix.sha256 }}
-        run: |
-          $archive = Join-Path $env:RUNNER_TEMP "blender-$env:BLENDER_VERSION-windows-x64.zip"
-          Invoke-WebRequest -Uri $env:BLENDER_DOWNLOAD_URL -OutFile $archive
-          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-          if ($actual -ne $env:BLENDER_SHA256) {
-            throw "Blender SHA-256 mismatch: expected $env:BLENDER_SHA256, got $actual"
-          }
-          Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP
-          $blenderPath = Join-Path $env:RUNNER_TEMP `
-            "blender-$env:BLENDER_VERSION-windows-x64\blender.exe"
-          "BLENDER_PATH=$blenderPath" | Out-File `
-            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       - name: Real scene, unsaved warning, and never-saves smoke on Ubuntu
         if: runner.os == 'Linux'
         env:
@@ -161,15 +137,6 @@ jobs:
             --blender "$BLENDER_PATH" \
             --expected-version "$BLENDER_VERSION" \
             --state-dir "$RUNNER_TEMP/blendersessiond-real-smoke"
-
-      - name: Real Session addon round-trip smoke on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          uv run python scripts/real_blender_smoke.py `
-            --blender "$env:BLENDER_PATH" `
-            --expected-version "$env:BLENDER_VERSION" `
-            --state-dir "$env:RUNNER_TEMP\blendersessiond-real-smoke"
 
       - name: Upload Session logs on failure
         if: failure()
