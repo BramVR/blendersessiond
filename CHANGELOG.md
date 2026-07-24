@@ -16,3 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional existing-scene startup, live unsaved-changes reporting, and explicit stop-never-saves behavior.
 - Pinned and locally patched BlenderMCP addon installation with third-party attribution and an auditable compatibility record.
 - Fake-Blender lifecycle coverage and pinned real-Blender smoke coverage across Ubuntu, macOS, and Windows.
+
+### Changed
+
+- Sessions now launch Blender with `--no-splash`, so the startup splash popup never appears in managed Sessions.
