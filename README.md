@@ -1,11 +1,12 @@
-![blendersessiond: agent-controlled local Blender Sessions](docs/assets/blendersessiond-header.png)
+![blendersessiond: agent-controlled local Blender Sessions](https://raw.githubusercontent.com/BramVR/blendersessiond/main/docs/assets/blendersessiond-header.png)
 
 <p align="center">
+  <a href="https://pypi.org/project/blendersessiond/"><img src="https://img.shields.io/pypi/v/blendersessiond?style=for-the-badge&amp;label=PyPI" alt="PyPI version"></a>
   <a href="https://github.com/BramVR/blendersessiond/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/BramVR/blendersessiond/ci.yml?branch=main&amp;style=for-the-badge&amp;label=CI" alt="CI status"></a>
   <a href="https://github.com/BramVR/blendersessiond/actions/workflows/real-blender-smoke.yml"><img src="https://img.shields.io/github/actions/workflow/status/BramVR/blendersessiond/real-blender-smoke.yml?branch=main&amp;style=for-the-badge&amp;label=Blender%20smoke" alt="Real Blender smoke status"></a>
-  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="Python 3.11 or newer"></a>
-  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge" alt="Supported platforms: macOS, Windows, and Linux"></a>
-  <a href="docs/compat.md"><img src="https://img.shields.io/badge/Blender-5.2.0%20validated-E87D0D?style=for-the-badge&amp;logo=blender&amp;logoColor=white" alt="Blender 5.2.0 validated"></a>
+  <a href="https://github.com/BramVR/blendersessiond/blob/main/pyproject.toml"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="Python 3.11 or newer"></a>
+  <a href="https://github.com/BramVR/blendersessiond/blob/main/.github/workflows/ci.yml"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge" alt="Supported platforms: macOS, Windows, and Linux"></a>
+  <a href="https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md"><img src="https://img.shields.io/badge/Blender-5.2.0%20validated-E87D0D?style=for-the-badge&amp;logo=blender&amp;logoColor=white" alt="Blender 5.2.0 validated"></a>
 </p>
 
 # blendersessiond
@@ -36,7 +37,7 @@ blendersessiond is GUI-only and same-machine: the CLI and Blender Session run
 on the same machine, and blendersessiond has no remote control plane or
 headless mode. The real-Blender smoke workflow currently validates Blender
 5.2.0 on all three platforms; macOS and Windows GUI runs are best-effort in
-hosted CI. See the [compatibility record](docs/compat.md) for the exact Blender,
+hosted CI. See the [compatibility record](https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md) for the exact Blender,
 addon, and MCP server pins.
 
 The addon is vendored from
@@ -45,12 +46,18 @@ The addon is vendored from
 then minimally patched for loopback binding, per-Session ports, and managed
 startup. The MCP stdio server is not vendored: `mcp-serve` runs the validated
 `blender-mcp==1.6.4` package through `uvx`. The complete patch and re-pin
-procedure are in the [compatibility record](docs/compat.md), with upstream
-licensing in [third-party attribution](THIRD_PARTY_NOTICES.md).
+procedure are in the [compatibility record](https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md), with upstream
+licensing in [third-party attribution](https://github.com/BramVR/blendersessiond/blob/main/THIRD_PARTY_NOTICES.md).
 
-## Install from source
+## Install
 
-Clone this repository, then install the CLI from the repository root:
+Install the published CLI from PyPI:
+
+```console
+uv tool install blendersessiond
+```
+
+Or install from a source checkout:
 
 ```console
 git clone https://github.com/BramVR/blendersessiond.git
@@ -249,10 +256,11 @@ plus a pinned real-Blender round trip.
 
 ## Reference
 
-- [Agent skill](.agents/skills/blendersessiond/SKILL.md)
-- [Changelog](CHANGELOG.md)
-- [Ubiquitous language](CONTEXT.md)
-- [Decision records](docs/adr/)
-- [BlenderMCP compatibility pins and re-pin procedure](docs/compat.md)
-- [Third-party attribution](THIRD_PARTY_NOTICES.md)
+- [Agent skill](https://github.com/BramVR/blendersessiond/blob/main/.agents/skills/blendersessiond/SKILL.md)
+- [Changelog](https://github.com/BramVR/blendersessiond/blob/main/CHANGELOG.md)
+- [Ubiquitous language](https://github.com/BramVR/blendersessiond/blob/main/CONTEXT.md)
+- [Decision records](https://github.com/BramVR/blendersessiond/tree/main/docs/adr)
+- [BlenderMCP compatibility pins and re-pin procedure](https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md)
+- [Release process](https://github.com/BramVR/blendersessiond/blob/main/docs/RELEASING.md)
+- [Third-party attribution](https://github.com/BramVR/blendersessiond/blob/main/THIRD_PARTY_NOTICES.md)
 - [v1 PRD issue #1](https://github.com/BramVR/blendersessiond/issues/1)

@@ -8,10 +8,36 @@ version = "0.1.0"
 description = "Own Blender Sessions for agent workflows"
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+    { name = "Bram Van Rompuy" },
+]
+keywords = ["agents", "blender", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: MacOS X",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
 dependencies = []
 
 [project.scripts]
 blendersessiond = "blendersessiond.cli:main"
+
+[project.urls]
+Changelog = "https://github.com/BramVR/blendersessiond/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/BramVR/blendersessiond#readme"
+Issues = "https://github.com/BramVR/blendersessiond/issues"
+Repository = "https://github.com/BramVR/blendersessiond"
 
 [dependency-groups]
 dev = [
