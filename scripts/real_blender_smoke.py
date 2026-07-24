@@ -141,9 +141,13 @@ def main() -> int:
             "MCP get_scene_info did not report the fixture object set",
         )
 
+        # A low-level data-API poke never marks the file dirty (Blender's own
+        # asterisk behaves the same); push an undo step like an interactive
+        # edit so bpy.data.is_dirty flips.
         mutation = (
             "obj = bpy.data.objects.new('Slice6UnsavedObject', None)\n"
-            "bpy.context.scene.collection.objects.link(obj)"
+            "bpy.context.scene.collection.objects.link(obj)\n"
+            "bpy.ops.ed.undo_push(message='add Slice6UnsavedObject')"
         )
         _run_cli(
             "call",

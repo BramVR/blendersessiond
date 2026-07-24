@@ -263,9 +263,13 @@ def test_scene_dirty_status_and_stop_never_saves(
             "Slice6FixtureCube",
         }
 
+        # Mutate the way an interactive edit does: a low-level data-API poke
+        # never marks the file dirty (Blender's own asterisk works the same),
+        # so add an object and push an undo step, which flips bpy.data.is_dirty.
         mutation = (
             "obj = bpy.data.objects.new('Slice6UnsavedObject', None)\n"
-            "bpy.context.scene.collection.objects.link(obj)"
+            "bpy.context.scene.collection.objects.link(obj)\n"
+            "bpy.ops.ed.undo_push(message='add Slice6UnsavedObject')"
         )
         mutated = run(
             "call",
