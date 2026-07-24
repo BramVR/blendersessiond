@@ -9,8 +9,14 @@ The pinned source URL is:
 
 The validated server requirement is defined by
 [`VALIDATED_SERVER_REQUIREMENT`](../src/blendersessiond/mcp_serve.py), currently
-`blender-mcp==1.6.4`. `mcp-serve` passes that explicit requirement to `uvx`, so
-the validated version is used even when another `blender-mcp` tool is installed.
+`blender-mcp==1.6.4`. The validated invocation is
+`uvx blender-mcp==1.6.4`. `mcp-serve` passes that explicit requirement to
+`uvx`, so the validated version is used even when another `blender-mcp` tool
+is installed.
+
+The real-Blender smoke workflow pins Blender `5.2.0`, including per-platform
+download URLs and SHA-256 checksums, in
+[`.github/workflows/real-blender-smoke.yml`](../.github/workflows/real-blender-smoke.yml).
 
 ## Local patch
 
@@ -26,9 +32,22 @@ is the complete reviewable delta against the pinned upstream file:
 - force server auto-start for managed Sessions even when a loaded scene saved
   the upstream auto-start preference as disabled.
 
-Upstream auto-start remains unchanged. Re-pins require regenerating the
-documented patch and validating the real Blender round trip against the named
-`blender-mcp` server version.
+## Re-pin procedure
+
+Per [ADR 0002](adr/0002-vendor-pinned-blender-mcp-addon.md), addon updates are
+deliberate compatibility changes:
+
+1. Select an upstream `ahujasid/blender-mcp` commit and a compatible released `blender-mcp` server version.
+2. Download that commit's unmodified `addon.py` to a temporary path; apply only the managed-Session changes summarized above to `src/blendersessiond/vendor/addon.py`.
+3. Regenerate `src/blendersessiond/vendor/addon.patch` as the complete unified diff from the pinned upstream file to the vendored file.
+4. Update the commit and source URL in this document and the patch header; update `VALIDATED_SERVER_REQUIREMENT` and this document when the validated server version changes.
+5. Run `uv run ruff check .`, `uv run pytest`, and the real-Blender addon, direct-call, MCP stdio, scene, unsaved-changes, and stop-never-saves smoke against the pins.
+6. Commit the vendored addon, patch, compatibility record, server pin, and resulting tests together only after the real round trip passes.
+
+To re-pin the smoke Blender runtime itself, select the desired stable Blender
+patch, update `BLENDER_VERSION`, every platform URL, and every SHA-256 in the
+workflow from Blender's official checksum file, then require the Ubuntu smoke
+leg to pass.
 
 ## Security posture
 
