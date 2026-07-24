@@ -257,7 +257,6 @@ def test_scene_path_is_recorded_and_passed_to_fake_blender(
     blender_argv = json.loads(_wait_for_file(argv_file))
     assert blender_argv == [
         "--factory-startup",
-        "--no-splash",
         expected_scene,
         "--python",
         str(

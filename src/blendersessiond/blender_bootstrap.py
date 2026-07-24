@@ -6,10 +6,15 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import bpy
+
 MODULE_NAME = "blendersessiond_vendored_blender_mcp"
 
 
 def main() -> None:
+    # Command-line startup scripts run before Blender decides whether to show
+    # its splash, so use the supported preference instead of an invented CLI flag.
+    bpy.context.preferences.view.show_splash = False
     addon_path = Path(__file__).with_name("vendor") / "addon.py"
     spec = importlib.util.spec_from_file_location(MODULE_NAME, addon_path)
     if spec is None or spec.loader is None:

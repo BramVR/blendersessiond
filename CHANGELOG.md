@@ -19,4 +19,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Sessions now launch Blender with `--no-splash`, so the startup splash popup never appears in managed Sessions.
+- Managed Sessions disable Blender's startup splash through the supported Python preference.
