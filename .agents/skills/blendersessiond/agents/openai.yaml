@@ -1,0 +1,4 @@
+interface:
+  display_name: "Blender Session Daemon"
+  short_description: "Own and operate agent-driven Blender sessions"
+  default_prompt: "Use $blendersessiond to start a healthy Blender session, perform the requested work, save it, and stop safely."
