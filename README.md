@@ -1,9 +1,5 @@
 ![blendersessiond: agent-controlled local Blender Sessions](docs/assets/blendersessiond-header.png)
 
-# blendersessiond
-
-<!-- Header image goes here. -->
-
 <p align="center">
   <a href="https://github.com/BramVR/blendersessiond/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/BramVR/blendersessiond/ci.yml?branch=main&amp;style=for-the-badge&amp;label=CI" alt="CI status"></a>
   <a href="https://github.com/BramVR/blendersessiond/actions/workflows/real-blender-smoke.yml"><img src="https://img.shields.io/github/actions/workflow/status/BramVR/blendersessiond/real-blender-smoke.yml?branch=main&amp;style=for-the-badge&amp;label=Blender%20smoke" alt="Real Blender smoke status"></a>
@@ -11,6 +7,8 @@
   <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge" alt="Supported platforms: macOS, Windows, and Linux"></a>
   <a href="docs/compat.md"><img src="https://img.shields.io/badge/Blender-5.2.0%20validated-E87D0D?style=for-the-badge&amp;logo=blender&amp;logoColor=white" alt="Blender 5.2.0 validated"></a>
 </p>
+
+# blendersessiond
 
 `blendersessiond` launches, configures, and owns local GUI Blender Sessions
 for agent workflows. It installs a pinned BlenderMCP addon at startup,
