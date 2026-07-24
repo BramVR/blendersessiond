@@ -370,6 +370,7 @@ def _wait_for_health(
             and process.get("alive") is True
             and socket_health.get("status") == "healthy"
             and socket_health.get("answered") is True
+            and isinstance(session.get("unsaved_changes"), bool)
         ):
             return last_payload
         time.sleep(1)
