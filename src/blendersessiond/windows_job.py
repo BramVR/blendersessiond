@@ -147,7 +147,7 @@ def _launch_child(
             stderr_name
         ).open("ab", buffering=0) as stderr:
             # Managed Sessions isolate user preferences even when opening a scene.
-            blender_arguments = [executable, "--factory-startup"]
+            blender_arguments = [executable, "--factory-startup", "--no-splash"]
             if scene_name:
                 blender_arguments.append(scene_name)
             blender_arguments.extend(["--python", addon_bootstrap_name])
