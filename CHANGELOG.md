@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Dependency-free project website with an interactive Session lifecycle guide, custom-domain search metadata, `llms.txt`, and GitHub Pages publishing.
 - Cross-platform `doctor` checks for Blender discovery, platform support, writable state, and recorded Session Health.
 - Named `start`, `status`, and `stop` lifecycle commands with isolated state, dynamic loopback ports, ownership checks, stale-record handling, process-tree termination, and retained logs.
 - Direct `call` access to the raw BlenderMCP addon protocol with JSON parameters and serialized per-Session connections.

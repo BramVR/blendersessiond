@@ -1,0 +1,37 @@
+# blendersessiond
+
+> A cross-platform CLI and MCP bridge for isolated local GUI Blender Sessions controlled by scripts and AI agents.
+
+## Canonical facts
+
+- blendersessiond launches, owns, checks, and stops only the Blender process trees it starts.
+- Sessions are named and isolated, with separate state, logs, and dynamically allocated loopback ports.
+- Addon APIs bind to 127.0.0.1. There is no remote control plane, telemetry, or headless mode.
+- Supported hosts are macOS, Windows, and Linux with Python 3.11 or newer.
+- `mcp-serve` connects an MCP client to one healthy Blender Session.
+
+## Primary resources
+
+- [Website](https://blendersessiond.bramvanrompuy.be/): Overview, quickstart, architecture, security, and common questions.
+- [Source and README](https://github.com/BramVR/blendersessiond): Canonical source code and project documentation.
+- [CLI reference](https://github.com/BramVR/blendersessiond#commands): Commands, options, and exit behavior.
+- [MCP guide](https://github.com/BramVR/blendersessiond#mcp-client-registration): MCP client configuration.
+- [Compatibility](https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md): Validated platforms, Blender versions, addon versions, and MCP clients.
+- [Security and limitations](https://github.com/BramVR/blendersessiond#security-and-limitations): Local-only boundaries and known limitations.
+
+## Quickstart
+
+```sh
+git clone https://github.com/BramVR/blendersessiond.git
+uv tool install ./blendersessiond
+blendersessiond doctor
+blendersessiond start --name demo
+blendersessiond call get_scene_info --name demo
+```
+
+## Terminology
+
+- Session: one named Blender process owned by blendersessiond, with its own state, logs, and loopback port.
+- Healthy Session: a running Session whose addon API responds successfully.
+- Named Session: a Session selected explicitly with `--name`, allowing multiple Blender instances to run side by side.
+- MCP bridge: the `mcp-serve` command that resolves a healthy Session and exposes its Blender tools to an MCP client.
