@@ -110,12 +110,14 @@ def test_real_blender_start_status_stop_round_trip(
             "status": "healthy",
             "alive": True,
         }
+        mcp_port = result.payload["session"]["mcp_port"]
         assert status.payload["session"]["health"]["socket"] == {
             "status": "healthy",
             "answered": True,
             "reason": "answered",
             "message": (
-                "Addon socket at 127.0.0.1:9876 answered the Health ping."
+                f"Addon socket at 127.0.0.1:{mcp_port} answered "
+                "the Health ping."
             ),
         }
 

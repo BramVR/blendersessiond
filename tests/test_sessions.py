@@ -8,8 +8,11 @@ import pytest
 
 from blendersessiond.processes import process_start_time
 from blendersessiond.sessions import (
+    BASE_MCP_PORT,
+    BASE_MCP_PORT_ENV_VAR,
     SessionError,
     SessionRecord,
+    _base_mcp_port,
     inspect_all_sessions,
     inspect_session,
     session_directory,
@@ -22,6 +25,24 @@ from blendersessiond.sessions import (
 @pytest.mark.parametrize("name", ["default", "shot-01", "shot.one", "shot_one", "9"])
 def test_valid_session_names(name: str) -> None:
     assert validate_session_name(name) == name
+
+
+def test_base_mcp_port_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(BASE_MCP_PORT_ENV_VAR, raising=False)
+    assert _base_mcp_port() == BASE_MCP_PORT
+
+    monkeypatch.setenv(BASE_MCP_PORT_ENV_VAR, "23456")
+    assert _base_mcp_port() == 23456
+
+
+@pytest.mark.parametrize("raw", ["not-a-port", "0", "65536", "-1", ""])
+def test_invalid_base_mcp_port_override_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+) -> None:
+    monkeypatch.setenv(BASE_MCP_PORT_ENV_VAR, raw)
+    with pytest.raises(SessionError, match="not a port number"):
+        _base_mcp_port()
 
 
 @pytest.mark.parametrize("name", ["", "../escape", ".hidden", "has space", "a" * 65])

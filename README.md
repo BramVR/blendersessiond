@@ -207,6 +207,11 @@ Set `BLENDERSESSIOND_STATE_DIR` to an absolute path to override this location.
 `blendersessiond status` prints each Session's log paths; use `--json` when a
 script needs the complete state record.
 
+Session MCP ports are allocated upward from `9876` on loopback. Set
+`BLENDERSESSIOND_BASE_MCP_PORT` to start allocation from a different port —
+the test suite uses this to keep fake-Blender Sessions off the ports a real
+Session on the same machine may hold.
+
 ## Security and limitations
 
 The vendored addon binds to IPv4 loopback (`127.0.0.1`) but its protocol is

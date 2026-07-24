@@ -14,10 +14,14 @@ from blendersessiond.processes import (
     process_start_time,
     terminate_owned_tree,
 )
-from blendersessiond.sessions import session_directory
+from blendersessiond.sessions import BASE_MCP_PORT_ENV_VAR, session_directory
 from blendersessiond.state import STATE_DIR_ENV_VAR
 
 pytestmark = pytest.mark.e2e
+
+
+def _port_base(environment: dict[str, str]) -> int:
+    return int(environment[BASE_MCP_PORT_ENV_VAR])
 
 
 def _wait_until_gone(pid: int, timeout: float = 10) -> None:
@@ -64,7 +68,7 @@ def test_start_status_stop_kills_tree_and_keeps_logs(
     assert started.completed.returncode == 0, started.completed.stderr
     session = started.payload["session"]
     assert session["name"] == "default"
-    assert session["mcp_port"] == 9876
+    assert session["mcp_port"] == _port_base(environment)
     assert session["scene_path"] is None
     assert session["blender"]["version"] == "4.3.2"
     assert Path(session["state_dir"]).name == "default".encode("ascii").hex()
@@ -80,7 +84,8 @@ def test_start_status_stop_kills_tree_and_keeps_logs(
             "answered": True,
             "reason": "answered",
             "message": (
-                "Addon socket at 127.0.0.1:9876 answered the Health ping."
+                f"Addon socket at 127.0.0.1:{session['mcp_port']} answered "
+                "the Health ping."
             ),
         },
     }
@@ -137,7 +142,7 @@ def test_two_named_sessions_have_distinct_ports_and_live_start_is_rejected(
     isolated_cli,
     fake_blender: Path,
 ) -> None:
-    _environment, run = isolated_cli
+    environment, run = isolated_cli
 
     first = run("start", "--name", "a", "--blender", str(fake_blender))
     second = run("start", "--name", "61", "--blender", str(fake_blender))
@@ -145,8 +150,8 @@ def test_two_named_sessions_have_distinct_ports_and_live_start_is_rejected(
 
     assert first.completed.returncode == 0
     assert second.completed.returncode == 0
-    assert first.payload["session"]["mcp_port"] == 9876
-    assert second.payload["session"]["mcp_port"] == 9877
+    assert first.payload["session"]["mcp_port"] == _port_base(environment)
+    assert second.payload["session"]["mcp_port"] == _port_base(environment) + 1
     assert (
         first.payload["session"]["state_dir"]
         != second.payload["session"]["state_dir"]
@@ -406,7 +411,7 @@ def test_dead_record_is_stale_then_start_reclaims_name_and_port(
     assert reclaimed.completed.returncode == 0
     assert reclaimed.payload["reclaimed_stale"] is True
     assert "record is stale" in reclaimed.payload["message"]
-    assert reclaimed.payload["session"]["mcp_port"] == 9876
+    assert reclaimed.payload["session"]["mcp_port"] == _port_base(environment)
     assert run("stop", "--name", "stale").completed.returncode == 0
 
     state_root = Path(environment[STATE_DIR_ENV_VAR])
@@ -427,7 +432,7 @@ def test_reused_pid_record_is_stale_and_reclaimed_without_touching_process(
         "name": "reused",
         "pid": os.getpid(),
         "process_start_time": "wrong-start-time",
-        "mcp_port": 9876,
+        "mcp_port": _port_base(environment),
         "blender_path": str(fake_blender),
         "blender_version": "4.3.2",
         "stdout_log": str(directory / "stdout.log"),

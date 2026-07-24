@@ -20,3 +20,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Managed Sessions disable Blender's startup splash through the supported Python preference.
+- `BLENDERSESSIOND_BASE_MCP_PORT` overrides the first port considered during MCP port allocation, and the test suite now allocates ephemeral per-test port ranges so a real Session running on the developer machine can no longer pollute e2e results.

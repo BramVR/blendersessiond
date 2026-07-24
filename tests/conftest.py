@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -14,6 +15,7 @@ from blendersessiond.processes import (
     owned_tree_exists,
     terminate_owned_tree,
 )
+from blendersessiond.sessions import BASE_MCP_PORT_ENV_VAR
 from blendersessiond.state import STATE_DIR_ENV_VAR
 
 
@@ -23,11 +25,32 @@ class CliResult:
     payload: dict
 
 
+def _free_mcp_port_base(span: int = 8) -> int:
+    # Sessions get base, base+1, ... so a fixed base (9876) collides with any
+    # real Session running on the developer machine; probe an ephemeral base
+    # whose next few ports are also free.
+    for _attempt in range(64):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            base = probe.getsockname()[1]
+        if base + span > 65535:
+            continue
+        try:
+            for offset in range(span):
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as scan:
+                    scan.bind(("127.0.0.1", base + offset))
+        except OSError:
+            continue
+        return base
+    raise RuntimeError("could not find a free MCP port range for tests")
+
+
 @pytest.fixture
 def isolated_cli(tmp_path: Path) -> Iterator[tuple[dict[str, str], object]]:
     state_root = tmp_path / "state"
     environment = dict(os.environ)
     environment[STATE_DIR_ENV_VAR] = str(state_root)
+    environment[BASE_MCP_PORT_ENV_VAR] = str(_free_mcp_port_base())
 
     def run(*arguments: str, timeout: float = 20) -> CliResult:
         completed = subprocess.run(
