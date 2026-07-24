@@ -2,13 +2,48 @@
 
 # blendersessiond
 
-`blendersessiond` launches and owns local GUI Blender Sessions for agent
-workflows. It supports macOS, Windows, and Linux with Python 3.11 or newer.
+<!-- Header image goes here. -->
 
-## Install
+<p align="center">
+  <a href="https://github.com/BramVR/blendersessiond/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/BramVR/blendersessiond/ci.yml?branch=main&amp;style=for-the-badge&amp;label=CI" alt="CI status"></a>
+  <a href="https://github.com/BramVR/blendersessiond/actions/workflows/real-blender-smoke.yml"><img src="https://img.shields.io/github/actions/workflow/status/BramVR/blendersessiond/real-blender-smoke.yml?branch=main&amp;style=for-the-badge&amp;label=Blender%20smoke" alt="Real Blender smoke status"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="Python 3.11 or newer"></a>
+  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge" alt="Supported platforms: macOS, Windows, and Linux"></a>
+  <a href="docs/compat.md"><img src="https://img.shields.io/badge/Blender-5.2.0%20validated-E87D0D?style=for-the-badge&amp;logo=blender&amp;logoColor=white" alt="Blender 5.2.0 validated"></a>
+</p>
 
-Install [uv](https://docs.astral.sh/uv/), clone this repository, then install
-the CLI from the repository root:
+`blendersessiond` launches, configures, and owns local GUI Blender Sessions
+for agent workflows. It installs a pinned BlenderMCP addon at startup,
+allocates an isolated loopback port for each Session, reports process and
+addon Health, and stops only the Blender process trees it launched.
+
+It supports macOS, Windows, and Linux with Python 3.11 or newer.
+
+## Highlights
+
+- No manual addon installation or Blender preference setup.
+- Named Sessions with independent state, logs, and MCP ports.
+- Static MCP client configuration despite dynamically allocated ports.
+- Health checks require both a live Blender process and a responsive addon.
+- Existing `.blend` scenes and direct raw addon calls are supported.
+- `stop` is predictable: it terminates the owned process tree and never saves.
+
+## Requirements and compatibility
+
+- [uv](https://docs.astral.sh/uv/) with `uvx` available on `PATH`.
+- Python 3.11 or newer.
+- Blender installed on macOS, Windows, or Linux.
+
+blendersessiond is GUI-only and same-machine: the CLI and Blender Session run
+on the same machine, and blendersessiond has no remote control plane or
+headless mode. The real-Blender smoke workflow currently validates Blender
+5.2.0 on all three platforms; macOS and Windows GUI runs are best-effort in
+hosted CI. See the [compatibility record](docs/compat.md) for the exact Blender,
+addon, and MCP server pins.
+
+## Install from source
+
+Clone this repository, then install the CLI from the repository root:
 
 ```console
 git clone https://github.com/BramVR/blendersessiond.git
@@ -16,9 +51,8 @@ cd blendersessiond
 uv tool install .
 ```
 
-Ensure uv's tool executable directory is on `PATH`. Blender must also be
-installed; pass its executable explicitly when automatic discovery does not
-find it.
+Ensure uv's tool executable directory is on `PATH`. Pass Blender explicitly
+when automatic discovery does not find it.
 
 ## Quickstart
 
@@ -53,7 +87,9 @@ factory-empty file.
 
 Run `blendersessiond COMMAND --help` for each command's flags. `doctor`,
 `start`, `status`, and `stop` support versioned JSON output with `--json`;
-`call` prints the addon's JSON result.
+successful `call` invocations always print the addon's JSON result, while
+`call --json` also makes failures machine-readable. `mcp-serve` reserves
+standard input and output for the MCP protocol.
 
 Exit codes follow one convention:
 
@@ -140,8 +176,68 @@ blendersessiond stop
 
 Use `--name SESSION` on both commands for a named Session.
 
+## Configuration and state
+
+Blender discovery uses the first available source in this order:
+
+1. `--blender PATH` on `doctor` or `start`;
+2. the `BLENDERSESSIOND_BLENDER` environment variable;
+3. `blender` or `blender.exe` on `PATH`;
+4. standard platform installation locations.
+
+When multiple valid standard installations are present, blendersessiond uses
+the newest version it can probe.
+
+Session records and Blender stdout/stderr logs live under the per-user state
+directory:
+
+- macOS: `~/Library/Application Support/blendersessiond`
+- Windows: `%LOCALAPPDATA%\blendersessiond`
+- Linux: `$XDG_STATE_HOME/blendersessiond` when set, otherwise
+  `~/.local/state/blendersessiond`
+
+Set `BLENDERSESSIOND_STATE_DIR` to an absolute path to override this location.
+`blendersessiond status` prints each Session's log paths; use `--json` when a
+script needs the complete state record.
+
+## Security and limitations
+
+The vendored addon binds to IPv4 loopback (`127.0.0.1`) but its protocol is
+deliberately unauthenticated and permits arbitrary Python execution inside
+Blender. Any local account or process that can reach a Session's loopback port
+can drive that Session. Do not expose or forward the port to an untrusted
+network or machine.
+
+The addon protocol is single-client. Give each concurrent MCP client its own
+named Session. blendersessiond does not supervise or restart Sessions in the
+background; `status` checks their Health on demand.
+
+## Development
+
+Install the locked development environment, then run the same lint and test
+gates used by CI:
+
+```console
+uv sync --locked
+uv run ruff check .
+uv run pytest
+```
+
+Real-Blender tests are opt-in because they launch the GUI. For example, on
+macOS or Linux:
+
+```console
+BLENDERSESSIOND_REAL_E2E=1 \
+BLENDERSESSIOND_BLENDER=/path/to/blender \
+uv run pytest -m real_blender
+```
+
+CI runs unit and fake-Blender lifecycle tests on macOS, Windows, and Linux,
+plus a pinned real-Blender round trip.
+
 ## Reference
 
+- [Changelog](CHANGELOG.md)
 - [Ubiquitous language](CONTEXT.md)
 - [Decision records](docs/adr/)
 - [BlenderMCP compatibility pins and re-pin procedure](docs/compat.md)
