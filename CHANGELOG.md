@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-24
+
 ### Added
 
 - Cross-platform `doctor` checks for Blender discovery, platform support, writable state, and recorded Session Health.
@@ -17,8 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pinned and locally patched BlenderMCP addon installation with third-party attribution and an auditable compatibility record.
 - Fake-Blender lifecycle coverage and pinned real-Blender smoke coverage across Ubuntu, macOS, and Windows.
 - Repo-owned agent skill for safe Session lifecycle, Blender MCP startup, direct addon calls, and save-before-stop handling.
+- Tokenless PyPI Trusted Publishing and GitHub Release automation for validated stable version tags.
 
 ### Changed
 
 - Managed Sessions disable Blender's startup splash through the supported Python preference.
 - `BLENDERSESSIOND_BASE_MCP_PORT` overrides the first port considered during MCP port allocation, and the test suite now allocates ephemeral per-test port ranges so a real Session running on the developer machine can no longer pollute e2e results.
+- Package metadata and installation documentation now support publishing and installing `blendersessiond` from PyPI.
