@@ -39,6 +39,15 @@ headless mode. The real-Blender smoke workflow currently validates Blender
 hosted CI. See the [compatibility record](docs/compat.md) for the exact Blender,
 addon, and MCP server pins.
 
+The addon is vendored from
+[`ahujasid/blender-mcp`](https://github.com/ahujasid/blender-mcp) at commit
+[`da4e16d`](https://github.com/ahujasid/blender-mcp/commit/da4e16d2069ce5154eaa2535bf995e843caf5c73),
+then minimally patched for loopback binding, per-Session ports, and managed
+startup. The MCP stdio server is not vendored: `mcp-serve` runs the validated
+`blender-mcp==1.6.4` package through `uvx`. The complete patch and re-pin
+procedure are in the [compatibility record](docs/compat.md), with upstream
+licensing in [third-party attribution](THIRD_PARTY_NOTICES.md).
+
 ## Install from source
 
 Clone this repository, then install the CLI from the repository root:
