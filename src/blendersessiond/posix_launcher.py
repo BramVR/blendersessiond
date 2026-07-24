@@ -32,7 +32,7 @@ def main() -> int:
                 return 1
             try:
                 # Managed Sessions isolate user preferences even when opening a scene.
-                blender_arguments = [executable, "--factory-startup", "--no-splash"]
+                blender_arguments = [executable, "--factory-startup"]
                 if scene_path:
                     blender_arguments.append(scene_path)
                 blender_arguments.extend(["--python", str(addon_bootstrap)])

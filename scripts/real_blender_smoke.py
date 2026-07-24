@@ -97,6 +97,30 @@ def main() -> int:
             healthy_session.get("unsaved_changes") is False,
             "fresh fixture Session did not report unsaved_changes=false",
         )
+        splash = _run_cli(
+            "call",
+            "execute_code",
+            "--name",
+            args.name,
+            "--params",
+            json.dumps(
+                {
+                    "code": (
+                        'print("true" if '
+                        "bpy.context.preferences.view.show_splash else "
+                        '"false")'
+                    )
+                }
+            ),
+            environment=environment,
+            expected_codes={0},
+            versioned=False,
+        )
+        _require(
+            splash.get("executed") is True
+            and splash.get("result", "").strip() == "false",
+            "managed Session did not disable Blender's startup splash preference",
+        )
         active_blender_pids = _blender_process_ids(blender)
         _require(
             blender_pid in active_blender_pids - baseline_pids,
@@ -214,9 +238,9 @@ def main() -> int:
         return 1
 
     print(
-        "PASS: real Blender fixture opened, direct and MCP scene info verified, "
-        "unsaved changes surfaced, stop preserved fixture bytes, and Ownership "
-        "verified."
+        "PASS: real Blender fixture opened without its startup splash, direct "
+        "and MCP scene info verified, unsaved changes surfaced, stop preserved "
+        "fixture bytes, and Ownership verified."
     )
     return 0
 
