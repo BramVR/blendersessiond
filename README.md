@@ -237,6 +237,7 @@ plus a pinned real-Blender round trip.
 
 ## Reference
 
+- [Agent skill](.agents/skills/blendersessiond/SKILL.md)
 - [Changelog](CHANGELOG.md)
 - [Ubiquitous language](CONTEXT.md)
 - [Decision records](docs/adr/)
