@@ -33,6 +33,7 @@ from blendersessiond.wire import (
 
 DEFAULT_SESSION_NAME = "default"
 BASE_MCP_PORT = 9876
+BASE_MCP_PORT_ENV_VAR = "BLENDERSESSIOND_BASE_MCP_PORT"
 OWNER_ENV_VAR = "BLENDERSESSIOND_OWNER_TOKEN"
 MCP_PORT_ENV_VAR = "BLENDERSESSIOND_MCP_PORT"
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -260,7 +261,7 @@ def start_session(
 
         reclaimed = previous.reclaimable
         with file_lock(root / ".ports.lock"):
-            port = _allocate_port(root, excluding_name=name)
+            port = _allocate_port(root, excluding_name=name, environ=environment)
             if reclaimed:
                 _remove_record_files(directory)
             record = _launch_and_record(
@@ -698,7 +699,28 @@ def _inspect_unlocked(state_root: Path, name: str) -> SessionInspection:
     )
 
 
-def _allocate_port(state_root: Path, *, excluding_name: str) -> int:
+def _base_mcp_port(environ: dict[str, str]) -> int:
+    raw = environ.get(BASE_MCP_PORT_ENV_VAR)
+    if raw is None:
+        return BASE_MCP_PORT
+    try:
+        port = int(raw)
+    except ValueError:
+        port = 0
+    if not 1 <= port <= 65535:
+        raise SessionError(
+            f"Cannot allocate an MCP port: {BASE_MCP_PORT_ENV_VAR}={raw!r} "
+            "is not a port number between 1 and 65535."
+        )
+    return port
+
+
+def _allocate_port(
+    state_root: Path,
+    *,
+    excluding_name: str,
+    environ: dict[str, str],
+) -> int:
     occupied: set[int] = set()
     sessions_root = state_root / "sessions"
     excluded_component = session_directory(state_root, excluding_name).name
@@ -725,7 +747,7 @@ def _allocate_port(state_root: Path, *, excluding_name: str) -> int:
             ):
                 occupied.add(inspection.record.mcp_port)
 
-    port = BASE_MCP_PORT
+    port = _base_mcp_port(environ)
     while port in occupied:
         port += 1
     return port
