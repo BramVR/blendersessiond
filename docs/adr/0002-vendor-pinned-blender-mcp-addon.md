@@ -16,12 +16,15 @@ agent-driven sessions don't fit that.
 ## Decision
 
 Vendor `addon.py` at a pinned upstream commit into this repo, with MIT
-attribution in THIRD_PARTY_NOTICES.md. Patch minimally: listen port taken
-from an environment variable, auto-start preserved. blendersessiond
-installs/enables the vendored addon at session launch (`--factory-startup`
-plus addon enable), never relying on per-machine Blender preferences.
-Upstream updates are deliberate re-pins after local validation, mirroring
-gg_mayasessiond's `mcp_compat.json` discipline.
+attribution in THIRD_PARTY_NOTICES.md. Patch minimally: bind IPv4 loopback
+for all uses; for managed Sessions, take the listen port from an environment
+variable, force auto-start even when a loaded scene disabled it, and avoid
+writing runtime server state into the scene. Unmanaged upstream scene
+settings remain unchanged. blendersessiond installs/enables the vendored
+addon at Session launch (`--factory-startup` plus addon registration), never
+relying on per-machine Blender preferences. Upstream updates are deliberate
+re-pins after local validation, mirroring gg_mayasessiond's
+`mcp_compat.json` discipline.
 
 ## Consequences
 

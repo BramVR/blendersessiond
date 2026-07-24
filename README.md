@@ -1,88 +1,73 @@
 # blendersessiond
 
-Minimal, same-machine CLI that launches Blender with the BlenderMCP addon and
-owns that Session for agent workflows: start, status, call, stop, and an
-`mcp-serve` shim that connects MCP clients to a named Session. No resident
-daemon, no remote control plane. Cross-platform (macOS, Windows, Linux),
-GUI Blender only in v1.
+`blendersessiond` launches and owns local GUI Blender Sessions for agent
+workflows. It supports macOS, Windows, and Linux with Python 3.11 or newer.
 
-## Install and doctor
+## Install
 
-Python 3.11+ and [uv](https://docs.astral.sh/uv/) are required.
+Install [uv](https://docs.astral.sh/uv/), clone this repository, then install
+the CLI from the repository root:
 
 ```console
-uv sync
-uv run blendersessiond doctor
-uv run blendersessiond doctor --json
+git clone https://github.com/BramVR/blendersessiond.git
+cd blendersessiond
+uv tool install .
 ```
 
-`doctor` exits 0 when the machine can host a Session and 1 when any check
-fails. Use `--blender PATH` to inspect a specific Blender executable.
+Ensure uv's tool executable directory is on `PATH`. Blender must also be
+installed; pass its executable explicitly when automatic discovery does not
+find it.
 
-The JSON report is versioned and stable within `schema_version: 1`:
+## Quickstart
 
-```json
-{
-  "schema_version": 1,
-  "status": "pass",
-  "platform": {"system": "Linux", "name": "Linux"},
-  "checks": [
-    {"name": "platform", "status": "pass", "message": "Linux is supported."},
-    {"name": "blender", "status": "pass", "message": "..."},
-    {"name": "state_directory", "status": "pass", "message": "..."}
-  ],
-  "blender": {
-    "path": "/usr/bin/blender",
-    "version": "4.3.0",
-    "source": "PATH"
-  },
-  "state_dir": "/home/user/.local/state/blendersessiond"
-}
-```
-
-When Blender is unavailable, its `path`, `version`, and `source` are `null`.
-
-## Session lifecycle
+These commands check the machine, start the default Session with a
+factory-empty scene, make one raw addon call, and stop the Session:
 
 ```console
-uv run blendersessiond start
-uv run blendersessiond start --scene /path/to/shot.blend
-uv run blendersessiond start --name second --blender /path/to/blender
-uv run blendersessiond status
-uv run blendersessiond status --name second --json
-uv run blendersessiond call get_scene_info --name second
-uv run blendersessiond call get_object_info --name second \
-  --params '{"name":"Cube"}'
-uv run blendersessiond stop --name second
+blendersessiond doctor
+blendersessiond start
+blendersessiond call get_scene_info
+blendersessiond stop
 ```
 
-The default Session Name is `default`. Each Session has its own directory,
-record, stdout/stderr logs, and reserved MCP port beginning at 9876. `stop`
-terminates the owned process tree without saving, without prompting, and
-removes the record; logs remain. Saving is the caller's explicit act: use
-`call` or MCP to save before `stop` when work must persist.
+Use a specific Blender executable or open an existing scene when starting:
 
-`start --scene PATH` requires an existing `.blend` file, opens it, and records
-its absolute path as `scene_path`. Without `--scene`, Blender starts with its
-factory-empty file. `status` shows the scene in human output and reports
-`scene_path` in JSON (`null` for a factory-empty Session).
+```console
+blendersessiond doctor --blender /path/to/blender
+blendersessiond start --blender /path/to/blender --scene /path/to/shot.blend
+```
 
-Session Health requires both the owned Blender process and its loopback MCP
-addon socket to answer. A live process with a dead or unresponsive socket is
-unhealthy with separate process and socket details in `status` and `doctor`.
-Each `status` also reads Blender's live `bpy.data.is_dirty` value through the
-addon. JSON reports `unsaved_changes` as `true` or `false`; it is the string
-`"unknown"` when the live value cannot be obtained, including when the socket
-is unreachable. Human output emits a warning when the value is true and never
-guesses when it is unknown.
+`--scene` must name an existing `.blend` file. Without it, Blender opens a
+factory-empty file.
 
-`call COMMAND [--params JSON]` opens one short-lived connection to the named
-Session, sends the raw BlenderMCP addon command, and prints its JSON result.
-Addon-reported errors are printed on stderr and exit 1.
+## Commands
+
+- `doctor`: Check whether this machine can host a Session and report recorded Session Health.
+- `start`: Launch and own a Blender Session, optionally from an existing scene.
+- `status`: Report one named Session or list every recorded Session.
+- `call`: Send one raw command and optional JSON parameters to a healthy Session's addon.
+- `stop`: Terminate an owned Session process tree without saving.
+- `mcp-serve`: Connect the validated `blender-mcp` stdio server to one healthy Session.
+
+Run `blendersessiond COMMAND --help` for each command's flags. `doctor`,
+`start`, `status`, and `stop` support versioned JSON output with `--json`;
+`call` prints the addon's JSON result.
+
+Exit codes follow one convention:
+
+- `0`: success or healthy status;
+- `1`: operation failure, including unhealthy, stale, or not-found status;
+- `2`: command-line usage error.
 
 ## MCP client registration
 
-Register the default Session once in `.mcp.json`:
+Start the default Session before launching the MCP client:
+
+```console
+blendersessiond start
+```
+
+Register the installed CLI in the project's `.mcp.json`:
 
 ```json
 {
@@ -95,58 +80,68 @@ Register the default Session once in `.mcp.json`:
 }
 ```
 
-Start the Session before the MCP client launches the server:
+`mcp-serve` requires `uvx` on `PATH`. It checks Session Health, then runs the
+validated `blender-mcp` server against that Session's loopback port. Keep the
+Session running while the MCP client uses it.
+
+## Multiple Sessions
+
+The default Session Name is `default`. Use `--name` to run independent
+Sessions side by side:
 
 ```console
-blendersessiond start
+blendersessiond start --name modeling
+blendersessiond start --name lighting --scene /path/to/lighting.blend
+blendersessiond status
+blendersessiond call get_scene_info --name modeling
+blendersessiond call get_object_info --name lighting --params '{"name":"Cube"}'
+blendersessiond stop --name modeling
+blendersessiond stop --name lighting
 ```
 
-For a named Session, add its name to the registration:
+Give each Session its own MCP server registration and MCP client connection:
 
 ```json
-"args": ["mcp-serve", "--name", "second"]
+{
+  "mcpServers": {
+    "blender-modeling": {
+      "command": "blendersessiond",
+      "args": ["mcp-serve", "--name", "modeling"]
+    },
+    "blender-lighting": {
+      "command": "blendersessiond",
+      "args": ["mcp-serve", "--name", "lighting"]
+    }
+  }
+}
 ```
 
-`mcp-serve` verifies that the named Session is healthy, sets
-`BLENDER_HOST=127.0.0.1` and its dynamic `BLENDER_PORT`, then replaces itself
-with the stock `uvx blender-mcp` stdio server. It requires
-[uv/uvx](https://docs.astral.sh/uv/) on `PATH`.
+## Save before stop
 
-Use one MCP client per Session. The addon protocol supports only one client;
-`mcp-serve` deliberately does not multiplex. To use two Sessions concurrently,
-give each its own MCP registration and `--name`.
+`stop` never saves and never prompts. Check `status` for the unsaved-changes
+warning, then save explicitly through Blender, MCP, or `call` before stopping
+when work must persist.
 
-Set `BLENDERSESSIOND_STATE_DIR` to an absolute path to override the platform
-data directory. This is intended for isolated automation and tests:
+Save an already named scene through `call`:
 
 ```console
-BLENDERSESSIOND_STATE_DIR=/tmp/my-run uv run blendersessiond status --json
+blendersessiond call execute_code --params '{"code":"bpy.ops.wm.save_mainfile()"}'
+blendersessiond stop
 ```
 
-The fake-Blender lifecycle e2e tests run in the normal test suite. Real Blender
-tests are opt-in, require a resolvable Blender binary, verify PATH discovery,
-isolate their state, and always stop Sessions they started. The Slice 6 fixture
-is generated once per test session by real Blender using
-`scripts/generate_scene_fixture.py`. The development sandbox could not complete
-Blender GPU initialization, so the real gate generates the fixture on demand
-rather than relying on an unverified committed binary:
+Give a factory-empty scene a path before stopping:
 
 ```console
-BLENDERSESSIOND_REAL_E2E=1 uv run pytest -m real_blender
+blendersessiond call execute_code --params '{"code":"bpy.ops.wm.save_as_mainfile(filepath=\"/absolute/path/to/scene.blend\")"}'
+blendersessiond stop
 ```
 
-To generate the fixture manually:
+Use `--name SESSION` on both commands for a named Session.
 
-```console
-blender --background --factory-startup \
-  --python scripts/generate_scene_fixture.py -- /tmp/slice6_scene.blend
-```
+## Reference
 
-Real-Blender lifecycle behavior is CI-gated by the required Ubuntu leg in
-`.github/workflows/real-blender-smoke.yml`.
-
-- Ubiquitous language: [CONTEXT.md](CONTEXT.md)
-- Decisions: [docs/adr/](docs/adr/)
-- BlenderMCP pin and patch: [docs/compat.md](docs/compat.md)
-- Third-party attribution: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-- v1 scope and plan: [PRD issue #1](https://github.com/BramVR/blendersessiond/issues/1)
+- [Ubiquitous language](CONTEXT.md)
+- [Decision records](docs/adr/)
+- [BlenderMCP compatibility pins and re-pin procedure](docs/compat.md)
+- [Third-party attribution](THIRD_PARTY_NOTICES.md)
+- [v1 PRD issue #1](https://github.com/BramVR/blendersessiond/issues/1)
