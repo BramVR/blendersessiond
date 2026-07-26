@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-26
+
 ### Removed
 
 - Upstream BlenderMCP telemetry is gone from managed Sessions: the vendored addon no longer contains the telemetry consent handler, preference, or UI (upstream's consent check granted itself consent when the addon was loaded outside Blender's Preferences, as managed Sessions do), and `mcp-serve` now runs the validated server with `DISABLE_TELEMETRY=true`, so no usage data, prompts, code, or screenshots are reported to the upstream backend.
