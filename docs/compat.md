@@ -30,7 +30,15 @@ is the complete reviewable delta against the pinned upstream file:
   so registering the addon does not itself create unsaved file changes. The
   upstream scene properties remain unchanged for unmanaged addon use;
 - force server auto-start for managed Sessions even when a loaded scene saved
-  the upstream auto-start preference as disabled.
+  the upstream auto-start preference as disabled;
+- delete the upstream telemetry surface entirely: the `get_telemetry_consent`
+  command handler, the `telemetry_consent` addon preference, and the telemetry
+  preferences UI. Upstream ships default-on telemetry to a hosted third-party
+  backend, and its consent handler falls back to consent-granted whenever the
+  addon is not registered through Blender's Preferences — which is exactly how
+  managed Sessions load it. blendersessiond deletes the code instead of relying
+  on that fallback; a stock `blender-mcp` server asking a managed Session for
+  consent now receives an unknown-command error and fails closed on its side.
 
 ## Re-pin procedure
 
@@ -58,3 +66,11 @@ server speaks this plain protocol — per-request credentials would break the
 unmodified-server contract (ADR 0002). Treat any account that can reach
 loopback on this machine as able to drive Blender. Hardening options are a
 post-v1 decision.
+
+Managed Sessions send no telemetry. The vendored addon has upstream's
+telemetry deleted (see the local patch above), and `mcp-serve` sets
+`DISABLE_TELEMETRY=true` for the validated stock server, which disables its
+telemetry client completely — including the baseline anonymous tier. A
+re-pin must preserve both: keep the telemetry removal in the vendored addon
+(pinned by `tests/test_vendor_addon.py`) and confirm the new server version
+still honors `DISABLE_TELEMETRY`.
