@@ -44,10 +44,16 @@ addon, and MCP server pins.
 The addon is vendored from
 [`ahujasid/blender-mcp`](https://github.com/ahujasid/blender-mcp) at commit
 [`da4e16d`](https://github.com/ahujasid/blender-mcp/commit/da4e16d2069ce5154eaa2535bf995e843caf5c73),
-then minimally patched for loopback binding, per-Session ports, and managed
-startup. The MCP stdio server is not vendored: `mcp-serve` runs the validated
-`blender-mcp==1.6.4` package through `uvx`. The complete patch and re-pin
-procedure are in the [compatibility record](https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md), with upstream
+then minimally patched for loopback binding, per-Session ports, managed
+startup, and telemetry removal. Upstream BlenderMCP includes default-on
+telemetry that reports usage — and, when it believes consent was given,
+prompts, code, and screenshots — to the upstream maintainer's hosted backend.
+blendersessiond does not want that telemetry: the vendored addon has all of it
+deleted, and `mcp-serve` runs the stock server with `DISABLE_TELEMETRY=true`,
+so managed Sessions send no telemetry at all. The MCP stdio server itself is
+not vendored: `mcp-serve` runs the validated `blender-mcp==1.6.4` package
+through `uvx`. The complete patch and re-pin procedure are in the
+[compatibility record](https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md), with upstream
 licensing in [third-party attribution](https://github.com/BramVR/blendersessiond/blob/main/THIRD_PARTY_NOTICES.md).
 
 ## Install

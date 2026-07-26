@@ -19,6 +19,7 @@ from blendersessiond.wire import LOOPBACK_HOST
 
 BLENDER_HOST_ENV_VAR = "BLENDER_HOST"
 BLENDER_PORT_ENV_VAR = "BLENDER_PORT"
+TELEMETRY_DISABLE_ENV_VAR = "DISABLE_TELEMETRY"
 VALIDATED_SERVER_REQUIREMENT = "blender-mcp==1.6.4"
 
 
@@ -47,6 +48,8 @@ def serve_mcp(
 
     environment[BLENDER_HOST_ENV_VAR] = LOOPBACK_HOST
     environment[BLENDER_PORT_ENV_VAR] = str(inspection.record.mcp_port)
+    # The stock server ships default-on telemetry; managed Sessions never send it.
+    environment[TELEMETRY_DISABLE_ENV_VAR] = "true"
     command = [uvx, VALIDATED_SERVER_REQUIREMENT]
     if os.name == "nt":
         return _run_in_windows_job(command, environment)

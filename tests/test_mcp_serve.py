@@ -29,6 +29,7 @@ Path(os.environ["FAKE_UVX_RECORD"]).write_text(
             "argv": sys.argv[1:],
             "host": os.environ.get("BLENDER_HOST"),
             "port": os.environ.get("BLENDER_PORT"),
+            "telemetry_disabled": os.environ.get("DISABLE_TELEMETRY"),
         }
     ),
     encoding="utf-8",
@@ -216,11 +217,13 @@ def test_named_sessions_exec_uvx_with_their_own_ports_and_stdio(
             "argv": ["blender-mcp==1.6.4"],
             "host": "127.0.0.1",
             "port": str(first.payload["session"]["mcp_port"]),
+            "telemetry_disabled": "true",
         },
         "second": {
             "argv": ["blender-mcp==1.6.4"],
             "host": "127.0.0.1",
             "port": str(second.payload["session"]["mcp_port"]),
+            "telemetry_disabled": "true",
         },
     }
     assert run("stop", "--name", "first").completed.returncode == 0
