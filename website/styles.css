@@ -267,22 +267,22 @@ h1 em::after {
   display: block;
   width: 100%;
   height: auto;
-  -webkit-mask-image:
-    radial-gradient(
-      ellipse 82% 54% at 58% 58%,
-      #000 0%,
-      #000 42%,
-      rgba(0, 0, 0, 0.62) 70%,
-      transparent 100%
-    );
-  mask-image:
-    radial-gradient(
-      ellipse 82% 54% at 58% 58%,
-      #000 0%,
-      #000 42%,
-      rgba(0, 0, 0, 0.62) 70%,
-      transparent 100%
-    );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.85) 7%,
+    #000 14%,
+    #000 86%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.85) 7%,
+    #000 14%,
+    #000 86%,
+    transparent 100%
+  );
 }
 
 .quickstart {
