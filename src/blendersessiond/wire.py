@@ -14,9 +14,10 @@ from typing import Any
 
 LOOPBACK_HOST = "127.0.0.1"
 HEALTH_COMMAND = "get_polyhaven_status"
-MAX_READ_TIMEOUT_SECONDS = 180.0
+MAX_CONNECT_TIMEOUT_SECONDS = 180.0
+MAX_READ_TIMEOUT_SECONDS = 3600.0
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 3.0
-DEFAULT_READ_TIMEOUT_SECONDS = MAX_READ_TIMEOUT_SECONDS
+DEFAULT_READ_TIMEOUT_SECONDS = 180.0
 HEALTH_CONNECT_TIMEOUT_SECONDS = 0.5
 HEALTH_READ_TIMEOUT_SECONDS = 2.0
 _RECEIVE_CHUNK_BYTES = 8192
@@ -73,8 +74,8 @@ def call_addon(
 ) -> Any:
     """Send one command on one short-lived addon connection."""
 
-    _validate_timeout("connect", connect_timeout)
-    _validate_timeout("read", read_timeout)
+    _validate_timeout("connect", connect_timeout, MAX_CONNECT_TIMEOUT_SECONDS)
+    _validate_timeout("read", read_timeout, MAX_READ_TIMEOUT_SECONDS)
     request = json.dumps(
         {"type": command, "params": params or {}},
         separators=(",", ":"),
@@ -215,9 +216,9 @@ def _receive_json(connection: socket.socket) -> Any:
             continue
 
 
-def _validate_timeout(label: str, timeout: float) -> None:
-    if not 0 < timeout <= MAX_READ_TIMEOUT_SECONDS:
+def _validate_timeout(label: str, timeout: float, maximum: float) -> None:
+    if not 0 < timeout <= maximum:
         raise ValueError(
             f"{label.capitalize()} timeout must be greater than 0 and no more "
-            f"than {MAX_READ_TIMEOUT_SECONDS:g} seconds."
+            f"than {maximum:g} seconds."
         )

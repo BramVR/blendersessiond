@@ -63,6 +63,48 @@ def test_call_addon_error_uses_stderr_and_exit_one(monkeypatch, capsys) -> None:
     assert output.err == "ERROR: Object not found: Missing\n"
 
 
+def test_call_passes_bounded_read_timeout(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_call(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(cli, "call_session", fake_call)
+
+    exit_code = cli.main(
+        [
+            "call",
+            "get_scene_info",
+            "--expect-session-id",
+            SESSION_ID,
+            "--read-timeout",
+            "600",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["read_timeout"] == 600.0
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+
+
+@pytest.mark.parametrize("value", ["0", "3600.1", "not-a-number"])
+def test_call_rejects_invalid_read_timeout(value: str) -> None:
+    with pytest.raises(SystemExit) as error:
+        cli.main(
+            [
+                "call",
+                "get_scene_info",
+                "--expect-session-id",
+                SESSION_ID,
+                "--read-timeout",
+                value,
+            ]
+        )
+
+    assert error.value.code == 2
+
+
 def test_call_rejects_non_object_params() -> None:
     with pytest.raises(SystemExit) as error:
         cli.main(

@@ -26,6 +26,7 @@ from blendersessiond.processes import (
 )
 from blendersessiond.state import resolve_state_directory
 from blendersessiond.wire import (
+    DEFAULT_READ_TIMEOUT_SECONDS,
     WireError,
     call_addon,
     probe_addon,
@@ -162,6 +163,7 @@ def call_session(
     params: dict[str, Any] | None = None,
     name: str = DEFAULT_SESSION_NAME,
     expected_session_id: str,
+    read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     state_root: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> Any:
@@ -186,6 +188,7 @@ def call_session(
                 inspection.record.mcp_port,
                 command,
                 params,
+                read_timeout=read_timeout,
             )
 
 
