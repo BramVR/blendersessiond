@@ -38,24 +38,37 @@ def test_fenced_cli_passes_exact_session_identity(monkeypatch) -> None:
     }
 
 
-def test_recover_started_session_identity_from_status(monkeypatch) -> None:
-    def fake_run_cli(*arguments, **_kwargs):
-        assert arguments == (
-            "status",
-            "--name",
-            "ci-real-blender",
-            "--json",
-        )
-        return {"status": "starting", "session": {"session_id": SESSION_ID}}
+def test_best_effort_stop_uses_exact_session_identity(monkeypatch) -> None:
+    captured: dict[str, object] = {}
 
-    monkeypatch.setattr(real_blender_smoke, "_run_cli", fake_run_cli)
+    def fake_run_fenced_cli(*arguments, **kwargs):
+        captured["arguments"] = arguments
+        captured["kwargs"] = kwargs
+        return {"status": "stopped"}
 
-    recovered = real_blender_smoke._recover_started_session_id(
-        "ci-real-blender",
-        environment={},
+    monkeypatch.setattr(
+        real_blender_smoke,
+        "_run_fenced_cli",
+        fake_run_fenced_cli,
     )
 
-    assert recovered == SESSION_ID
+    real_blender_smoke._best_effort_stop(
+        "ci-real-blender",
+        SESSION_ID,
+        {"PATH": "test"},
+    )
+
+    assert captured["arguments"] == (
+        "stop",
+        "--name",
+        "ci-real-blender",
+        "--json",
+    )
+    assert captured["kwargs"] == {
+        "session_id": SESSION_ID,
+        "environment": {"PATH": "test"},
+        "expected_codes": {0, 1},
+    }
 
 
 def test_wait_for_health_waits_for_unsaved_changes(monkeypatch) -> None:
