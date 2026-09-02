@@ -169,7 +169,7 @@
             </button>
             <span class="sr-only" data-copy-status role="status" aria-live="polite"></span>
           </div>
-          <pre><code class="terminal-code"><span class="terminal-line"><b class="prompt">$</b> git clone https://github.com/BramVR/blendersessiond.git</span><span class="terminal-line"><b class="prompt">$</b> uv tool install ./blendersessiond</span><span class="terminal-line"><b class="prompt">$</b> blendersessiond doctor</span><span class="terminal-line"><b class="prompt">$</b> blendersessiond start --name demo</span><span class="terminal-line terminal-success">✓ Session "demo" started (PID 42421) on 127.0.0.1:51842</span><span class="terminal-line"><b class="prompt">$</b> blendersessiond call get_scene_info --name demo</span><span class="terminal-line">{</span><span class="terminal-line">  "name": "(Unsaved)",</span><span class="terminal-line">  "objects": 3,</span><span class="terminal-line">  "active_object": "Cube"</span><span class="terminal-line">}</span></code></pre>
+          <pre><code class="terminal-code"><span class="terminal-line"><b class="prompt">$</b> git clone https://github.com/BramVR/blendersessiond.git</span><span class="terminal-line"><b class="prompt">$</b> uv tool install ./blendersessiond</span><span class="terminal-line"><b class="prompt">$</b> blendersessiond doctor</span><span class="terminal-line"><b class="prompt">$</b> blendersessiond start --name demo --json</span><span class="terminal-line terminal-success">✓ Session "demo" started · ID bss_…</span><span class="terminal-line"><b class="prompt">$</b> SESSION_ID=bss_replace_with_session_id_from_start</span><span class="terminal-line"><b class="prompt">$</b> blendersessiond call get_scene_info --name demo --expect-session-id "$SESSION_ID"</span><span class="terminal-line">{</span><span class="terminal-line">  "name": "(Unsaved)",</span><span class="terminal-line">  "objects": 3,</span><span class="terminal-line">  "active_object": "Cube"</span><span class="terminal-line">}</span></code></pre>
         </div>
       </section>
 
@@ -236,15 +236,15 @@
           </button>
           <button type="button" data-step="call" aria-pressed="false">
             <span>3</span><strong>call</strong><small>Run commands against the addon.</small>
-            <code>blendersessiond call get_scene_info</code>
+            <code>blendersessiond call get_scene_info --expect-session-id $SESSION_ID</code>
           </button>
           <button type="button" data-step="save" aria-pressed="false">
             <span>4</span><strong>save</strong><small>Save .blend files on demand.</small>
-            <code>blendersessiond call execute_code --name demo --params '{"code":"bpy.ops.wm.save_mainfile()"}'</code>
+            <code>blendersessiond call execute_code --name demo --params '{"code":"bpy.ops.wm.save_mainfile()"}' --expect-session-id $SESSION_ID</code>
           </button>
           <button type="button" data-step="stop" aria-pressed="false">
             <span>5</span><strong>stop</strong><small>Shut down the owned process tree.</small>
-            <code>blendersessiond stop --name demo</code>
+            <code>blendersessiond stop --name demo --expect-session-id $SESSION_ID</code>
           </button>
         </div>
         <div class="flow-result" aria-live="off">

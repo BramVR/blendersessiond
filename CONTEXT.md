@@ -19,6 +19,13 @@ The identifier of a Session on its machine. Multiple Sessions may run side by
 side; each has a unique name and its own MCP port. When no name is given, the
 Session is named `default`.
 
+### Session Identity
+
+An opaque, immutable ID assigned to one Session lifecycle. A Session Name
+routes to current state; its Session identity authorizes later `call` and
+`stop` operations. A caller must never reuse an identity after the named
+Session has been replaced.
+
 ### Ownership
 
 blendersessiond is the sole lifecycle authority for a Session: it opens

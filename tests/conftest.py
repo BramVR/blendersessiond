@@ -53,8 +53,30 @@ def isolated_cli(tmp_path: Path) -> Iterator[tuple[dict[str, str], object]]:
     environment[BASE_MCP_PORT_ENV_VAR] = str(_free_mcp_port_base())
 
     def run(*arguments: str, timeout: float = 20) -> CliResult:
+        command_arguments = list(arguments)
+        if (
+            command_arguments
+            and command_arguments[0] in {"call", "stop"}
+            and "--expect-session-id" not in command_arguments
+        ):
+            name = "default"
+            if "--name" in command_arguments:
+                name = command_arguments[command_arguments.index("--name") + 1]
+            record_path = (
+                state_root / "sessions" / name.encode("ascii").hex() / "session.json"
+            )
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            command_arguments.extend(
+                ["--expect-session-id", record["session_id"]]
+            )
         completed = subprocess.run(
-            [sys.executable, "-m", "blendersessiond", *arguments, "--json"],
+            [
+                sys.executable,
+                "-m",
+                "blendersessiond",
+                *command_arguments,
+                "--json",
+            ],
             env=environment,
             capture_output=True,
             text=True,

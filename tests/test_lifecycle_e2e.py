@@ -198,6 +198,71 @@ def test_call_round_trip_and_parameterized_command(
     assert run("stop").completed.returncode == 0
 
 
+def test_replacement_session_identity_fences_call_and_stop(
+    isolated_cli,
+    fake_blender: Path,
+) -> None:
+    _environment, run = isolated_cli
+    started = run("start", "--blender", str(fake_blender))
+    session_id = started.payload["session"]["session_id"]
+    replacement_id = "bss_" + "z" * 32
+
+    assert session_id.startswith("bss_")
+    assert run("status").payload["sessions"][0]["session_id"] == session_id
+
+    refused_call = run(
+        "call",
+        "get_scene_info",
+        "--expect-session-id",
+        replacement_id,
+    )
+    refused_stop = run(
+        "stop",
+        "--expect-session-id",
+        replacement_id,
+    )
+
+    assert refused_call.completed.returncode == 1
+    assert refused_call.payload["status"] == "error"
+    assert "identity does not match" in refused_call.payload["message"]
+    assert refused_stop.completed.returncode == 1
+    assert refused_stop.payload["status"] == "error"
+    assert "identity does not match" in refused_stop.payload["message"]
+
+    still_running = run("status", "--name", "default")
+    assert still_running.completed.returncode == 0
+    assert still_running.payload["session"]["session_id"] == session_id
+    assert run("stop").completed.returncode == 0
+
+
+def test_live_legacy_session_can_be_recovered_with_derived_identity(
+    isolated_cli,
+    fake_blender: Path,
+) -> None:
+    _environment, run = isolated_cli
+    started = run("start", "--blender", str(fake_blender))
+    record_path = Path(started.payload["session"]["state_dir"]) / "session.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    del record["session_id"]
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    recovered = run("status", "--name", "default")
+    recovered_id = recovered.payload["session"]["session_id"]
+    called = run(
+        "call",
+        "get_scene_info",
+        "--expect-session-id",
+        recovered_id,
+    )
+    stopped = run("stop", "--expect-session-id", recovered_id)
+
+    assert recovered.completed.returncode == 0
+    assert recovered_id.startswith("bss_legacy_")
+    assert called.completed.returncode == 0
+    assert called.payload["name"] == "Scene"
+    assert stopped.completed.returncode == 0
+
+
 def test_live_process_with_dead_socket_is_unhealthy_with_reason(
     isolated_cli,
     fake_blender: Path,
@@ -292,6 +357,9 @@ def test_scene_path_is_recorded_and_passed_to_fake_blender(
         check=False,
     )
     assert human_status.returncode == 0
+    assert f"Session ID: {started.payload['session']['session_id']}" in (
+        human_status.stdout
+    )
     assert f"scene: {expected_scene}" in human_status.stdout
     assert "unsaved changes: no" in human_status.stdout
     assert run("stop").completed.returncode == 0

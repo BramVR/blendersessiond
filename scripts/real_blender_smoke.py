@@ -47,14 +47,13 @@ def main() -> int:
     print(f"Blender: {blender}")
     print(f"Session state: {state_dir}")
     baseline_pids: set[int] = set()
-    start_attempted = False
     stop_succeeded = False
+    session_id: str | None = None
     session_logs: set[Path] = set()
     try:
         scene_fixture = _generate_scene_fixture(blender, state_dir)
         fixture_hash = _file_hash(scene_fixture)
         baseline_pids = _blender_process_ids(blender)
-        start_attempted = True
         started = _run_cli(
             "start",
             "--name",
@@ -69,6 +68,7 @@ def main() -> int:
         )
         _require(started.get("status") == "started", "start did not report started")
         session = _dict_field(started, "session")
+        session_id = _string_field(session, "session_id")
         _require(session.get("name") == args.name, "start returned wrong Session Name")
         _require(
             _same_path(_dict_field(session, "blender").get("path"), blender),
@@ -84,6 +84,7 @@ def main() -> int:
 
         healthy = _wait_for_health(
             args.name,
+            expected_session_id=session_id,
             timeout=args.health_timeout,
             environment=environment,
         )
@@ -97,7 +98,7 @@ def main() -> int:
             healthy_session.get("unsaved_changes") is False,
             "fresh fixture Session did not report unsaved_changes=false",
         )
-        splash = _run_cli(
+        splash = _run_fenced_cli(
             "call",
             "execute_code",
             "--name",
@@ -112,6 +113,7 @@ def main() -> int:
                     )
                 }
             ),
+            session_id=session_id,
             environment=environment,
             expected_codes={0},
             versioned=False,
@@ -127,11 +129,12 @@ def main() -> int:
             "healthy Session pid is not the selected Blender executable",
         )
 
-        scene = _run_cli(
+        scene = _run_fenced_cli(
             "call",
             "get_scene_info",
             "--name",
             args.name,
+            session_id=session_id,
             environment=environment,
             expected_codes={0},
             versioned=False,
@@ -173,13 +176,14 @@ def main() -> int:
             "bpy.context.scene.collection.objects.link(obj)\n"
             "bpy.ops.ed.undo_push(message='add Slice6UnsavedObject')"
         )
-        _run_cli(
+        _run_fenced_cli(
             "call",
             "execute_code",
             "--name",
             args.name,
             "--params",
             json.dumps({"code": mutation}),
+            session_id=session_id,
             environment=environment,
             expected_codes={0},
             versioned=False,
@@ -193,15 +197,20 @@ def main() -> int:
             expected_codes={0},
         )
         _require(
+            _dict_field(dirty, "session").get("session_id") == session_id,
+            "status returned a different Session identity after mutation",
+        )
+        _require(
             _dict_field(dirty, "session").get("unsaved_changes") is True,
             "mutated Session did not report unsaved_changes=true",
         )
 
-        stopped = _run_cli(
+        stopped = _run_fenced_cli(
             "stop",
             "--name",
             args.name,
             "--json",
+            session_id=session_id,
             environment=environment,
             expected_codes={0},
         )
@@ -232,8 +241,8 @@ def main() -> int:
         )
     except (OSError, SmokeFailure, subprocess.SubprocessError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
-        if start_attempted and not stop_succeeded:
-            _best_effort_stop(args.name, environment)
+        if not stop_succeeded:
+            _cleanup_started_session(args.name, session_id, environment)
         _print_log_tails(session_logs, state_dir)
         return 1
 
@@ -295,6 +304,23 @@ def _run_cli(
     return payload
 
 
+def _run_fenced_cli(
+    *arguments: str,
+    session_id: str,
+    environment: dict[str, str],
+    expected_codes: set[int],
+    versioned: bool = True,
+) -> dict[str, Any]:
+    return _run_cli(
+        *arguments,
+        "--expect-session-id",
+        session_id,
+        environment=environment,
+        expected_codes=expected_codes,
+        versioned=versioned,
+    )
+
+
 def _generate_scene_fixture(blender: Path, state_dir: Path) -> Path:
     fixture = state_dir.parent / f"{state_dir.name}-slice6-scene.blend"
     generator = Path(__file__).with_name("generate_scene_fixture.py")
@@ -344,6 +370,7 @@ def _scene_object_names(scene: dict[str, Any]) -> set[str]:
 def _wait_for_health(
     name: str,
     *,
+    expected_session_id: str,
     timeout: float,
     environment: dict[str, str],
 ) -> dict[str, Any]:
@@ -359,6 +386,10 @@ def _wait_for_health(
             expected_codes={0, 1},
         )
         session = _dict_field(last_payload, "session")
+        if session.get("session_id") != expected_session_id:
+            raise SmokeFailure(
+                "status returned a different Session identity during startup"
+            )
         health = _dict_field(session, "health")
         process = _dict_field(health, "process")
         socket_health = _dict_field(health, "socket")
@@ -703,19 +734,40 @@ def _process_exists(pid: int) -> bool:
     return True
 
 
-def _best_effort_stop(name: str, environment: dict[str, str]) -> None:
+def _best_effort_stop(
+    name: str,
+    session_id: str,
+    environment: dict[str, str],
+) -> None:
     print("Attempting best-effort Session cleanup.", file=sys.stderr)
     try:
-        _run_cli(
+        _run_fenced_cli(
             "stop",
             "--name",
             name,
             "--json",
+            session_id=session_id,
             environment=environment,
             expected_codes={0, 1},
         )
     except (OSError, SmokeFailure, subprocess.SubprocessError) as error:
         print(f"Cleanup failed: {error}", file=sys.stderr)
+
+
+def _cleanup_started_session(
+    name: str,
+    session_id: str | None,
+    environment: dict[str, str],
+) -> None:
+    if session_id is None:
+        # A lookup by reusable Session Name could adopt and stop a concurrent
+        # winner. Failed start returned no authority, so cleanup must fail closed.
+        print(
+            "Cleanup skipped: start returned no exact Session identity.",
+            file=sys.stderr,
+        )
+        return
+    _best_effort_stop(name, session_id, environment)
 
 
 def _log_paths(session: dict[str, Any]) -> set[Path]:
@@ -747,6 +799,13 @@ def _dict_field(payload: dict[str, Any], key: str) -> dict[str, Any]:
     value = payload.get(key)
     if not isinstance(value, dict):
         raise SmokeFailure(f"CLI JSON field {key!r} is not an object")
+    return value
+
+
+def _string_field(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise SmokeFailure(f"{key} is not a non-empty string")
     return value
 
 
