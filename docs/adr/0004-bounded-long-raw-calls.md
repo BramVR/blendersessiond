@@ -18,6 +18,11 @@ with `call --read-timeout SECONDS`, bounded to one hour. The same-machine
 daemon owns this per-call socket limit; a remote orchestrator still owns the
 shorter overall Scenario deadline and cleanup policy.
 
+Machine-readable wire failures carry a typed `reason`. Read-timeout expiry is
+`timeout`, and the integration capability probe exposes
+`typed-call-error-reason` so a remote orchestrator can require this semantic
+before starting a Session.
+
 Connection and Health-probe timeouts remain short and unchanged. The override
 applies only after a healthy, exact-identity-fenced Session has accepted a raw
 call.
@@ -29,3 +34,5 @@ call.
 - Existing callers retain the 180-second behavior unless they opt in.
 - A one-hour hard maximum prevents typo-driven indefinite waits.
 - Blender Box must choose a timeout no later than its remaining Run deadline.
+- Remote wrappers can persist read-timeout expiry distinctly from ordinary
+  call failure without parsing error prose or inferring from elapsed time.
