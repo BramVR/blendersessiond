@@ -24,7 +24,11 @@ from blendersessiond.sessions import (
     validate_session_id,
     validate_session_name,
 )
-from blendersessiond.wire import WireError
+from blendersessiond.wire import (
+    DEFAULT_READ_TIMEOUT_SECONDS,
+    MAX_READ_TIMEOUT_SECONDS,
+    WireError,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,6 +102,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=_json_object,
         metavar="JSON",
         help="Command parameters as a JSON object (default: {}).",
+    )
+    call.add_argument(
+        "--read-timeout",
+        default=DEFAULT_READ_TIMEOUT_SECONDS,
+        type=_read_timeout,
+        metavar="SECONDS",
+        help="Wait up to SECONDS for a response (default: 180; maximum: 3600).",
     )
     _add_json_argument(call)
 
@@ -223,6 +234,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 params=args.params,
                 name=args.name,
                 expected_session_id=args.expect_session_id,
+                read_timeout=args.read_timeout,
             )
         except (SessionError, WireError, OSError, RuntimeError, ValueError) as error:
             if args.json:
@@ -292,6 +304,21 @@ def _session_id(value: str) -> str:
         return validate_session_id(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _read_timeout(value: str) -> float:
+    try:
+        timeout = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "read timeout must be a number of seconds"
+        ) from error
+    if not 0 < timeout <= MAX_READ_TIMEOUT_SECONDS:
+        raise argparse.ArgumentTypeError(
+            "read timeout must be greater than 0 and no more than "
+            f"{MAX_READ_TIMEOUT_SECONDS:g} seconds"
+        )
+    return timeout
 
 
 def _json_object(value: str) -> dict[str, Any]:

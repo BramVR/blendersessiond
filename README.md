@@ -117,6 +117,11 @@ successful `call` invocations always print the addon's JSON result, while
 `call --json` also makes failures machine-readable. `mcp-serve` reserves
 standard input and output for the MCP protocol.
 
+Raw calls wait up to 180 seconds by default. Use `call --read-timeout SECONDS`
+for a known long render or script, up to the hard 3,600-second maximum. Keep an
+outer workflow deadline and choose a read timeout no later than its remaining
+time.
+
 Exit codes follow one convention:
 
 - `0`: success or healthy status;

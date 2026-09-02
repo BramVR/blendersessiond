@@ -28,6 +28,9 @@ Blender lifecycle, Blender MCP startup, and direct addon calls.
 - Use absolute paths. `--scene` must identify an existing `.blend` file.
 - Prefer Blender MCP tools for normal scene work. Use raw `call` for bootstrap,
   focused fallback, or diagnostics; `execute_code` runs arbitrary Python.
+- Raw `call` waits 180 seconds by default. For known longer work, set
+  `--read-timeout` no later than the remaining workflow deadline and never
+  above its one-hour hard maximum.
 - Never assume `stop` saves. It terminates the owned process tree without saving
   or prompting.
 - Before stopping, inspect `unsaved_changes`. Save deliberately when changes

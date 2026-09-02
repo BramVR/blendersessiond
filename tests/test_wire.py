@@ -129,6 +129,11 @@ def test_response_timeout() -> None:
             call_addon(port, "get_scene_info", read_timeout=0.05)
 
 
+def test_read_timeout_has_a_hard_one_hour_maximum() -> None:
+    with pytest.raises(ValueError, match="no more than 3600 seconds"):
+        call_addon(9876, "get_scene_info", read_timeout=3600.1)
+
+
 def test_partial_response() -> None:
     with scripted_addon(b'{"status":"success"') as (port, _requests):
         with pytest.raises(WireProtocolError, match="partial JSON"):
