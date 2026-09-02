@@ -125,6 +125,10 @@ launching Blender or reading Session state:
 blendersessiond capabilities --require blender-box-v1
 ```
 
+Wrappers that persist timeout state should also pass
+`--require-capability typed-call-error-reason`. With `call --json`, wire
+failures include a stable `reason`; a read-timeout expiration uses `timeout`.
+
 Raw calls wait up to 180 seconds by default. Use `call --read-timeout SECONDS`
 for a known long render or script, up to the hard 3,600-second maximum. Keep an
 outer workflow deadline and choose a read timeout no later than its remaining

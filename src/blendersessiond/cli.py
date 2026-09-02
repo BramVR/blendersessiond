@@ -36,6 +36,7 @@ BLENDER_BOX_CAPABILITIES = [
     "expect-session-id-call",
     "expect-session-id-stop",
     "bounded-call-read-timeout",
+    "typed-call-error-reason",
 ]
 
 
@@ -56,6 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[BLENDER_BOX_CONTRACT],
         metavar="CONTRACT",
         help="Require one exact supported integration contract.",
+    )
+    capabilities.add_argument(
+        "--require-capability",
+        action="append",
+        choices=BLENDER_BOX_CAPABILITIES,
+        metavar="CAPABILITY",
+        help="Require a named capability within the integration contract.",
     )
 
     doctor = commands.add_parser(
@@ -272,7 +280,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except (SessionError, WireError, OSError, RuntimeError, ValueError) as error:
             if args.json:
-                _print_failure(command="call", message=str(error), as_json=True)
+                _print_failure(
+                    command="call",
+                    message=str(error),
+                    as_json=True,
+                    reason=error.reason if isinstance(error, WireError) else None,
+                )
             else:
                 print(f"ERROR: {error}", file=sys.stderr)
             return 1
@@ -429,20 +442,23 @@ def _print_session(session: dict[str, Any]) -> None:
                 f"socket={socket_health.get('status')}"
             )
             socket_message = socket_health.get("message")
-            if (
-                socket_health.get("status") != "healthy"
-                and isinstance(socket_message, str)
+            if socket_health.get("status") != "healthy" and isinstance(
+                socket_message, str
             ):
                 print(f"  socket: {socket_message}")
 
 
-def _print_failure(*, command: str, message: str, as_json: bool) -> None:
+def _print_failure(
+    *, command: str, message: str, as_json: bool, reason: str | None = None
+) -> None:
     payload = {
         "schema_version": 1,
         "status": "error",
         "command": command,
         "message": message,
     }
+    if reason is not None:
+        payload["reason"] = reason
     if as_json:
         print(json.dumps(payload, indent=2))
     else:

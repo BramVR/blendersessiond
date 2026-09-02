@@ -10,7 +10,7 @@ import pytest
 
 from blendersessiond import cli
 from blendersessiond.state import STATE_DIR_ENV_VAR
-from blendersessiond.wire import AddonError
+from blendersessiond.wire import AddonError, WireTimeoutError
 
 SESSION_ID = "bss_" + "a" * 32
 
@@ -28,8 +28,24 @@ def test_capabilities_reports_required_blender_box_contract(capsys) -> None:
             "expect-session-id-call",
             "expect-session-id-stop",
             "bounded-call-read-timeout",
+            "typed-call-error-reason",
         ],
     }
+
+
+def test_capabilities_accepts_required_typed_call_error_reason(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "capabilities",
+            "--require",
+            "blender-box-v1",
+            "--require-capability",
+            "typed-call-error-reason",
+        ]
+    )
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "compatible"
 
 
 def test_capabilities_rejects_unknown_contract() -> None:
@@ -85,6 +101,32 @@ def test_call_addon_error_uses_stderr_and_exit_one(monkeypatch, capsys) -> None:
     assert exit_code == 1
     assert output.out == ""
     assert output.err == "ERROR: Object not found: Missing\n"
+
+
+def test_call_json_timeout_reports_typed_reason(monkeypatch, capsys) -> None:
+    def fail_call(*_args, **_kwargs):
+        raise WireTimeoutError("Timed out waiting for Blender")
+
+    monkeypatch.setattr(cli, "call_session", fail_call)
+
+    exit_code = cli.main(
+        [
+            "call",
+            "get_scene_info",
+            "--expect-session-id",
+            SESSION_ID,
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "schema_version": 1,
+        "status": "error",
+        "command": "call",
+        "reason": "timeout",
+        "message": "Timed out waiting for Blender",
+    }
 
 
 def test_call_passes_bounded_read_timeout(monkeypatch, capsys) -> None:
