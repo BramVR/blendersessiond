@@ -174,10 +174,13 @@ def call_session(
     if not directory.exists():
         raise SessionError(_not_found(name).message)
     with file_lock(directory / ".lock"):
+        _require_current_session_identity(
+            directory,
+            expected_session_id,
+        )
         inspection = _inspect_unlocked(root, name)
         if not inspection.healthy or inspection.record is None:
             raise SessionError(inspection.message)
-        _require_session_identity(inspection.record, expected_session_id)
         with file_lock(directory / ".wire.lock"):
             return call_addon(
                 inspection.record.mcp_port,
@@ -378,10 +381,13 @@ def stop_session(
         return StopResult(inspection, False, inspection.message)
 
     with file_lock(directory / ".lock"):
+        _require_current_session_identity(
+            directory,
+            expected_session_id,
+        )
         inspection = _inspect_unlocked(root, name)
         if inspection.record is None:
             return StopResult(inspection, False, inspection.message)
-        _require_session_identity(inspection.record, expected_session_id)
         if inspection.stoppable:
             with file_lock(root / ".ports.lock"):
                 terminate_owned_tree(
@@ -826,6 +832,26 @@ def _new_session_id() -> str:
 def _legacy_session_id(owner_token: str) -> str:
     digest = hashlib.sha256(owner_token.encode("utf-8")).hexdigest()
     return f"bss_legacy_{digest}"
+
+
+def _require_current_session_identity(
+    directory: Path,
+    expected_session_id: str,
+) -> None:
+    """Fence a routed Session before inspecting its process or socket."""
+
+    record_path = directory / _RECORD_FILE
+    if not record_path.exists():
+        record_path = directory / _LAUNCHING_FILE
+        if not record_path.exists():
+            return
+    try:
+        record = _read_record(record_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        # Full inspection owns the existing unreadable-record diagnostic and
+        # returns before touching any process or socket when parsing fails.
+        return
+    _require_session_identity(record, expected_session_id)
 
 
 def _require_session_identity(

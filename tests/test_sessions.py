@@ -13,6 +13,7 @@ from blendersessiond.sessions import (
     SessionError,
     SessionRecord,
     _base_mcp_port,
+    call_session,
     inspect_all_sessions,
     inspect_session,
     session_directory,
@@ -187,6 +188,61 @@ def test_legacy_record_gets_stable_opaque_session_identity(tmp_path: Path) -> No
     assert first.record.session_id.startswith("bss_legacy_")
     assert second.record.session_id == first.record.session_id
     assert token not in first.record.session_id
+
+
+@pytest.mark.parametrize("operation", ["call", "stop"])
+def test_wrong_session_identity_is_rejected_before_session_inspection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    directory = session_directory(tmp_path, "replacement")
+    directory.mkdir(parents=True)
+    record = SessionRecord(
+        schema_version=1,
+        session_id=SESSION_ID,
+        name="replacement",
+        pid=os.getpid(),
+        process_start_time=process_start_time(os.getpid()) or "missing",
+        mcp_port=9876,
+        blender_path="/fake/blender",
+        blender_version="4.3.2",
+        stdout_log=str(directory / "stdout.log"),
+        stderr_log=str(directory / "stderr.log"),
+        state_dir=str(directory),
+        started_at="2026-07-23T00:00:00+00:00",
+        owner_token="replacement-owner",
+        controller_pid=os.getpid(),
+        controller_start_time=process_start_time(os.getpid()) or "missing",
+    )
+    (directory / "session.json").write_text(
+        json.dumps(record.__dict__),
+        encoding="utf-8",
+    )
+
+    def unexpected_inspection(*_args, **_kwargs):
+        pytest.fail("replacement Session was inspected before identity fencing")
+
+    monkeypatch.setattr(
+        "blendersessiond.sessions._inspect_unlocked",
+        unexpected_inspection,
+    )
+    replacement_id = "bss_" + "z" * 32
+
+    with pytest.raises(SessionError, match="identity does not match"):
+        if operation == "call":
+            call_session(
+                "get_scene_info",
+                name="replacement",
+                expected_session_id=replacement_id,
+                state_root=tmp_path,
+            )
+        else:
+            stop_session(
+                name="replacement",
+                expected_session_id=replacement_id,
+                state_root=tmp_path,
+            )
 
 
 def test_live_unverifiable_record_is_preserved_and_cannot_be_reclaimed(
