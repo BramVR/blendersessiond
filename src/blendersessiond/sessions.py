@@ -204,11 +204,14 @@ def validate_session_name(name: str) -> str:
 def validate_session_id(session_id: str) -> str:
     """Validate an opaque Session identity copied from daemon output."""
 
+    message = (
+        "Session ID must be an opaque bss_ identity returned by "
+        "blendersessiond start or status."
+    )
+    if not isinstance(session_id, str):
+        raise ValueError(message)
     if not _SESSION_ID_PATTERN.fullmatch(session_id):
-        raise ValueError(
-            "Session ID must be an opaque bss_ identity returned by "
-            "blendersessiond start or status."
-        )
+        raise ValueError(message)
     return session_id
 
 

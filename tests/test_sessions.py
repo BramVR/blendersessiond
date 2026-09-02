@@ -321,3 +321,48 @@ def test_non_positive_record_pid_is_unreadable_and_never_signaled(
     assert inspection.status == "unreadable"
     assert "pid fields must be positive" in inspection.message
     assert stopped.stopped is False
+
+
+def test_non_string_record_session_identity_is_unreadable(
+    tmp_path: Path,
+) -> None:
+    directory = session_directory(tmp_path, "invalid-identity")
+    directory.mkdir(parents=True)
+    token = "invalid-identity-token"
+    process_time = process_start_time(os.getpid()) or "missing"
+    payload = {
+        "schema_version": 1,
+        "session_id": 123,
+        "name": "invalid-identity",
+        "pid": os.getpid(),
+        "process_start_time": process_time,
+        "mcp_port": 9876,
+        "blender_path": "/fake/blender",
+        "blender_version": "4.3.2",
+        "stdout_log": str(directory / "stdout.log"),
+        "stderr_log": str(directory / "stderr.log"),
+        "state_dir": str(directory),
+        "started_at": "2026-07-23T00:00:00+00:00",
+        "owner_token": token,
+        "controller_pid": os.getpid(),
+        "controller_start_time": process_time,
+    }
+    (directory / "session.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+    (directory / "ownership.json").write_text(
+        json.dumps({"token": token}),
+        encoding="utf-8",
+    )
+
+    inspection = inspect_session(name="invalid-identity", state_root=tmp_path)
+    stopped = stop_session(
+        name="invalid-identity",
+        expected_session_id=SESSION_ID,
+        state_root=tmp_path,
+    )
+
+    assert inspection.status == "unreadable"
+    assert "Session ID" in inspection.message
+    assert stopped.stopped is False
