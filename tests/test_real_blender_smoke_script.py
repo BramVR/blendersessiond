@@ -38,6 +38,26 @@ def test_fenced_cli_passes_exact_session_identity(monkeypatch) -> None:
     }
 
 
+def test_recover_started_session_identity_from_status(monkeypatch) -> None:
+    def fake_run_cli(*arguments, **_kwargs):
+        assert arguments == (
+            "status",
+            "--name",
+            "ci-real-blender",
+            "--json",
+        )
+        return {"status": "starting", "session": {"session_id": SESSION_ID}}
+
+    monkeypatch.setattr(real_blender_smoke, "_run_cli", fake_run_cli)
+
+    recovered = real_blender_smoke._recover_started_session_id(
+        "ci-real-blender",
+        environment={},
+    )
+
+    assert recovered == SESSION_ID
+
+
 def test_wait_for_health_waits_for_unsaved_changes(monkeypatch) -> None:
     payloads = iter(
         [

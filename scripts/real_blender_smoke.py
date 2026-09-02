@@ -55,6 +55,18 @@ def main() -> int:
         scene_fixture = _generate_scene_fixture(blender, state_dir)
         fixture_hash = _file_hash(scene_fixture)
         baseline_pids = _blender_process_ids(blender)
+        initial = _run_cli(
+            "status",
+            "--name",
+            args.name,
+            "--json",
+            environment=environment,
+            expected_codes={1},
+        )
+        _require(
+            initial.get("status") == "not-found",
+            "task-local Session Name was not empty before startup",
+        )
         start_attempted = True
         started = _run_cli(
             "start",
@@ -199,6 +211,10 @@ def main() -> int:
             expected_codes={0},
         )
         _require(
+            _dict_field(dirty, "session").get("session_id") == session_id,
+            "status returned a different Session identity after mutation",
+        )
+        _require(
             _dict_field(dirty, "session").get("unsaved_changes") is True,
             "mutated Session did not report unsaved_changes=true",
         )
@@ -239,8 +255,24 @@ def main() -> int:
         )
     except (OSError, SmokeFailure, subprocess.SubprocessError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
-        if start_attempted and not stop_succeeded and session_id is not None:
-            _best_effort_stop(args.name, session_id, environment)
+        cleanup_id = session_id
+        if start_attempted and not stop_succeeded and cleanup_id is None:
+            try:
+                cleanup_id = _recover_started_session_id(
+                    args.name,
+                    environment=environment,
+                )
+            except (
+                OSError,
+                SmokeFailure,
+                subprocess.SubprocessError,
+            ) as recovery_error:
+                print(
+                    f"Cleanup identity recovery failed: {recovery_error}",
+                    file=sys.stderr,
+                )
+        if start_attempted and not stop_succeeded and cleanup_id is not None:
+            _best_effort_stop(args.name, cleanup_id, environment)
         _print_log_tails(session_logs, state_dir)
         return 1
 
@@ -407,6 +439,26 @@ def _wait_for_health(
         f"Session Health did not become healthy within {timeout:.0f}s; "
         f"last status: {last_payload}"
     )
+
+
+def _recover_started_session_id(
+    name: str,
+    *,
+    environment: dict[str, str],
+) -> str | None:
+    """Recover only after main proved this task-local Session slot was empty."""
+
+    status = _run_cli(
+        "status",
+        "--name",
+        name,
+        "--json",
+        environment=environment,
+        expected_codes={0, 1},
+    )
+    if status.get("status") == "not-found":
+        return None
+    return _string_field(_dict_field(status, "session"), "session_id")
 
 
 def run_mcp_stdio_round_trip(
