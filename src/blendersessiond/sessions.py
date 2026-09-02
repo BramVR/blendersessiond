@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -37,6 +38,7 @@ BASE_MCP_PORT_ENV_VAR = "BLENDERSESSIOND_BASE_MCP_PORT"
 OWNER_ENV_VAR = "BLENDERSESSIOND_OWNER_TOKEN"
 MCP_PORT_ENV_VAR = "BLENDERSESSIOND_MCP_PORT"
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_SESSION_ID_PATTERN = re.compile(r"^bss_[A-Za-z0-9_-]{32,80}$")
 _RECORD_FILE = "session.json"
 _OWNERSHIP_FILE = "ownership.json"
 _LAUNCHING_FILE = "launching.json"
@@ -55,6 +57,7 @@ class SessionRecord:
     """Durable facts needed to identify and manage one Session."""
 
     schema_version: int
+    session_id: str
     name: str
     pid: int
     process_start_time: str
@@ -72,6 +75,7 @@ class SessionRecord:
 
     def public_dict(self) -> dict[str, Any]:
         return {
+            "session_id": self.session_id,
             "name": self.name,
             "pid": self.pid,
             "process_start_time": self.process_start_time,
@@ -157,12 +161,14 @@ def call_session(
     *,
     params: dict[str, Any] | None = None,
     name: str = DEFAULT_SESSION_NAME,
+    expected_session_id: str,
     state_root: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> Any:
     """Call one raw addon command on a healthy named Session."""
 
     validate_session_name(name)
+    validate_session_id(expected_session_id)
     root = _resolve_root(state_root, environ)
     directory = session_directory(root, name)
     if not directory.exists():
@@ -171,6 +177,7 @@ def call_session(
         inspection = _inspect_unlocked(root, name)
         if not inspection.healthy or inspection.record is None:
             raise SessionError(inspection.message)
+        _require_session_identity(inspection.record, expected_session_id)
         with file_lock(directory / ".wire.lock"):
             return call_addon(
                 inspection.record.mcp_port,
@@ -189,6 +196,17 @@ def validate_session_name(name: str) -> str:
             "or number."
         )
     return name
+
+
+def validate_session_id(session_id: str) -> str:
+    """Validate an opaque Session identity copied from daemon output."""
+
+    if not _SESSION_ID_PATTERN.fullmatch(session_id):
+        raise ValueError(
+            "Session ID must be an opaque bss_ identity returned by "
+            "blendersessiond start or status."
+        )
+    return session_id
 
 
 def resolve_scene_path(scene_path: str | Path) -> Path:
@@ -345,12 +363,14 @@ def inspect_all_sessions(
 def stop_session(
     *,
     name: str = DEFAULT_SESSION_NAME,
+    expected_session_id: str,
     state_root: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> StopResult:
     """Stop an owned Session tree and remove its record."""
 
     validate_session_name(name)
+    validate_session_id(expected_session_id)
     root = _resolve_root(state_root, environ)
     directory = session_directory(root, name)
     if not directory.exists():
@@ -361,6 +381,7 @@ def stop_session(
         inspection = _inspect_unlocked(root, name)
         if inspection.record is None:
             return StopResult(inspection, False, inspection.message)
+        _require_session_identity(inspection.record, expected_session_id)
         if inspection.stoppable:
             with file_lock(root / ".ports.lock"):
                 terminate_owned_tree(
@@ -435,6 +456,7 @@ def _launch_and_record(
     stdout_path = (directory / "stdout.log").resolve()
     stderr_path = (directory / "stderr.log").resolve()
     owner_token = secrets.token_hex(32)
+    session_id = _new_session_id()
     process_environment = dict(environment)
     process_environment[OWNER_ENV_VAR] = owner_token
     process_environment[MCP_PORT_ENV_VAR] = str(port)
@@ -483,6 +505,7 @@ def _launch_and_record(
             raise SessionError("Session process-tree controller exited during startup.")
         provisional = SessionRecord(
             schema_version=1,
+            session_id=session_id,
             name=name,
             pid=controller_pid,
             process_start_time=controller_start_time,
@@ -520,6 +543,7 @@ def _launch_and_record(
 
         record = SessionRecord(
             schema_version=1,
+            session_id=session_id,
             name=name,
             pid=process_pid,
             process_start_time=start_time,
@@ -784,10 +808,36 @@ def _read_record(path: Path) -> SessionRecord:
     scene_path = payload.get("scene_path")
     if scene_path is not None and not isinstance(scene_path, str):
         raise ValueError("field 'scene_path' is invalid")
+    session_id = payload.get("session_id")
+    if session_id is None:
+        session_id = _legacy_session_id(payload["owner_token"])
+    validate_session_id(session_id)
     return SessionRecord(
         **{key: payload[key] for key in required},
+        session_id=session_id,
         scene_path=scene_path,
     )
+
+
+def _new_session_id() -> str:
+    return f"bss_{secrets.token_urlsafe(32)}"
+
+
+def _legacy_session_id(owner_token: str) -> str:
+    digest = hashlib.sha256(owner_token.encode("utf-8")).hexdigest()
+    return f"bss_legacy_{digest}"
+
+
+def _require_session_identity(
+    record: SessionRecord,
+    expected_session_id: str,
+) -> None:
+    if not secrets.compare_digest(record.session_id, expected_session_id):
+        raise SessionError(
+            f"Session '{record.name}' identity does not match; refuse to use "
+            "a replacement Session. Read status and retry with its exact "
+            "session_id."
+        )
 
 
 def _read_json(path: Path) -> dict[str, Any]:

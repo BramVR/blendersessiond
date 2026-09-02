@@ -21,6 +21,8 @@ from blendersessiond.sessions import (
     validate_session_name,
 )
 
+SESSION_ID = "bss_" + "a" * 32
+
 
 @pytest.mark.parametrize("name", ["default", "shot-01", "shot.one", "shot_one", "9"])
 def test_valid_session_names(name: str) -> None:
@@ -82,6 +84,7 @@ def test_start_time_mismatch_is_stale_even_for_a_live_pid(tmp_path: Path) -> Non
     token = "test-token"
     record = SessionRecord(
         schema_version=1,
+        session_id=SESSION_ID,
         name="reused",
         pid=os.getpid(),
         process_start_time="definitely-not-this-process",
@@ -118,6 +121,7 @@ def test_missing_ownership_marker_is_stale(tmp_path: Path) -> None:
     directory.mkdir(parents=True)
     record = SessionRecord(
         schema_version=1,
+        session_id=SESSION_ID,
         name="unowned",
         pid=os.getpid(),
         process_start_time=process_start_time(os.getpid()) or "missing",
@@ -143,6 +147,48 @@ def test_missing_ownership_marker_is_stale(tmp_path: Path) -> None:
     assert "Ownership marker" in result.message
 
 
+def test_legacy_record_gets_stable_opaque_session_identity(tmp_path: Path) -> None:
+    directory = session_directory(tmp_path, "legacy")
+    directory.mkdir(parents=True)
+    token = "legacy-owner-token"
+    record = SessionRecord(
+        schema_version=1,
+        session_id=SESSION_ID,
+        name="legacy",
+        pid=os.getpid(),
+        process_start_time="not-this-process",
+        mcp_port=9876,
+        blender_path="/fake/blender",
+        blender_version="4.3.2",
+        stdout_log=str(directory / "stdout.log"),
+        stderr_log=str(directory / "stderr.log"),
+        state_dir=str(directory),
+        started_at="2026-07-23T00:00:00+00:00",
+        owner_token=token,
+        controller_pid=os.getpid(),
+        controller_start_time="not-this-controller",
+    )
+    legacy_payload = dict(record.__dict__)
+    del legacy_payload["session_id"]
+    (directory / "session.json").write_text(
+        json.dumps(legacy_payload),
+        encoding="utf-8",
+    )
+    (directory / "ownership.json").write_text(
+        json.dumps({"token": token}),
+        encoding="utf-8",
+    )
+
+    first = inspect_session(name="legacy", state_root=tmp_path)
+    second = inspect_session(name="legacy", state_root=tmp_path)
+
+    assert first.record is not None
+    assert second.record is not None
+    assert first.record.session_id.startswith("bss_legacy_")
+    assert second.record.session_id == first.record.session_id
+    assert token not in first.record.session_id
+
+
 def test_live_unverifiable_record_is_preserved_and_cannot_be_reclaimed(
     tmp_path: Path,
 ) -> None:
@@ -150,6 +196,7 @@ def test_live_unverifiable_record_is_preserved_and_cannot_be_reclaimed(
     directory.mkdir(parents=True)
     record = SessionRecord(
         schema_version=1,
+        session_id=SESSION_ID,
         name="unverifiable",
         pid=os.getpid(),
         process_start_time=process_start_time(os.getpid()) or "missing",
@@ -169,7 +216,11 @@ def test_live_unverifiable_record_is_preserved_and_cannot_be_reclaimed(
 
     with pytest.raises(SessionError, match="cannot be reclaimed"):
         start_session(name="unverifiable", state_root=tmp_path)
-    stopped = stop_session(name="unverifiable", state_root=tmp_path)
+    stopped = stop_session(
+        name="unverifiable",
+        expected_session_id=SESSION_ID,
+        state_root=tmp_path,
+    )
 
     assert stopped.stopped is False
     assert "Preserved the Session record" in stopped.message
@@ -205,7 +256,11 @@ def test_non_positive_record_pid_is_unreadable_and_never_signaled(
     )
 
     inspection = inspect_session(name="invalid-pid", state_root=tmp_path)
-    stopped = stop_session(name="invalid-pid", state_root=tmp_path)
+    stopped = stop_session(
+        name="invalid-pid",
+        expected_session_id=SESSION_ID,
+        state_root=tmp_path,
+    )
 
     assert inspection.status == "unreadable"
     assert "pid fields must be positive" in inspection.message

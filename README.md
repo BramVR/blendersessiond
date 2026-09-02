@@ -82,10 +82,15 @@ factory-empty scene, make one raw addon call, and stop the Session:
 
 ```console
 blendersessiond doctor
-blendersessiond start
-blendersessiond call get_scene_info
-blendersessiond stop
+blendersessiond start --json
+SESSION_ID=bss_replace_with_session_id_from_start
+blendersessiond call get_scene_info --expect-session-id "$SESSION_ID"
+blendersessiond stop --expect-session-id "$SESSION_ID"
 ```
+
+Copy `session.session_id` from the `start --json` result. Session Names route
+to current state; this opaque ID proves that later calls and stops still refer
+to the same lifecycle. `status --json` reports the current ID for recovery.
 
 Use a specific Blender executable or open an existing scene when starting:
 
@@ -152,10 +157,12 @@ Sessions side by side:
 blendersessiond start --name modeling
 blendersessiond start --name lighting --scene /path/to/lighting.blend
 blendersessiond status
-blendersessiond call get_scene_info --name modeling
-blendersessiond call get_object_info --name lighting --params '{"name":"Cube"}'
-blendersessiond stop --name modeling
-blendersessiond stop --name lighting
+MODELING_ID=bss_replace_with_modeling_session_id
+LIGHTING_ID=bss_replace_with_lighting_session_id
+blendersessiond call get_scene_info --name modeling --expect-session-id "$MODELING_ID"
+blendersessiond call get_object_info --name lighting --params '{"name":"Cube"}' --expect-session-id "$LIGHTING_ID"
+blendersessiond stop --name modeling --expect-session-id "$MODELING_ID"
+blendersessiond stop --name lighting --expect-session-id "$LIGHTING_ID"
 ```
 
 Give each Session its own MCP server registration and MCP client connection:
@@ -184,15 +191,15 @@ when work must persist.
 Save an already named scene through `call`:
 
 ```console
-blendersessiond call execute_code --params '{"code":"bpy.ops.wm.save_mainfile()"}'
-blendersessiond stop
+blendersessiond call execute_code --params '{"code":"bpy.ops.wm.save_mainfile()"}' --expect-session-id "$SESSION_ID"
+blendersessiond stop --expect-session-id "$SESSION_ID"
 ```
 
 Give a factory-empty scene a path before stopping:
 
 ```console
-blendersessiond call execute_code --params '{"code":"bpy.ops.wm.save_as_mainfile(filepath=\"/absolute/path/to/scene.blend\")"}'
-blendersessiond stop
+blendersessiond call execute_code --params '{"code":"bpy.ops.wm.save_as_mainfile(filepath=\"/absolute/path/to/scene.blend\")"}' --expect-session-id "$SESSION_ID"
+blendersessiond stop --expect-session-id "$SESSION_ID"
 ```
 
 Use `--name SESSION` on both commands for a named Session.

@@ -25,13 +25,15 @@
 git clone https://github.com/BramVR/blendersessiond.git
 uv tool install ./blendersessiond
 blendersessiond doctor
-blendersessiond start --name demo
-blendersessiond call get_scene_info --name demo
+blendersessiond start --name demo --json
+SESSION_ID=bss_replace_with_session_id_from_start
+blendersessiond call get_scene_info --name demo --expect-session-id "$SESSION_ID"
 ```
 
 ## Terminology
 
 - Session: one named Blender process owned by blendersessiond, with its own state, logs, and loopback port.
+- Session identity: the opaque `session_id` returned by start or status and required to authorize call and stop.
 - Healthy Session: a running Session whose addon API responds successfully.
 - Named Session: a Session selected explicitly with `--name`, allowing multiple Blender instances to run side by side.
 - MCP bridge: the `mcp-serve` command that resolves a healthy Session and exposes its Blender tools to an MCP client.

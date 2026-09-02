@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `call` and `stop` now require the exact opaque Session ID returned by `start` or `status`, preventing stale callers from acting on a replacement Session that reused the same name.
+
 ## [0.1.1] - 2026-07-26
 
 ### Removed

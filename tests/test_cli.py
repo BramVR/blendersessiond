@@ -12,14 +12,19 @@ from blendersessiond import cli
 from blendersessiond.state import STATE_DIR_ENV_VAR
 from blendersessiond.wire import AddonError
 
+SESSION_ID = "bss_" + "a" * 32
+
 
 @pytest.mark.parametrize("verb", ["doctor", "start", "status", "stop"])
 def test_relative_state_override_is_machine_readable_error(verb: str) -> None:
     environment = dict(os.environ)
     environment[STATE_DIR_ENV_VAR] = "relative/state"
 
+    arguments = [sys.executable, "-m", "blendersessiond", verb]
+    if verb == "stop":
+        arguments.extend(["--expect-session-id", SESSION_ID])
     completed = subprocess.run(
-        [sys.executable, "-m", "blendersessiond", verb, "--json"],
+        [*arguments, "--json"],
         env=environment,
         capture_output=True,
         text=True,
@@ -41,7 +46,16 @@ def test_call_addon_error_uses_stderr_and_exit_one(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr(cli, "call_session", fail_call)
 
-    exit_code = cli.main(["call", "get_object_info", "--params", '{"name":"Missing"}'])
+    exit_code = cli.main(
+        [
+            "call",
+            "get_object_info",
+            "--params",
+            '{"name":"Missing"}',
+            "--expect-session-id",
+            SESSION_ID,
+        ]
+    )
     output = capsys.readouterr()
 
     assert exit_code == 1
@@ -51,7 +65,32 @@ def test_call_addon_error_uses_stderr_and_exit_one(monkeypatch, capsys) -> None:
 
 def test_call_rejects_non_object_params() -> None:
     with pytest.raises(SystemExit) as error:
-        cli.main(["call", "get_scene_info", "--params", "[]"])
+        cli.main(
+            [
+                "call",
+                "get_scene_info",
+                "--params",
+                "[]",
+                "--expect-session-id",
+                SESSION_ID,
+            ]
+        )
+
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["call", "get_scene_info"],
+        ["stop"],
+    ],
+)
+def test_stale_sensitive_commands_require_session_identity(
+    arguments: list[str],
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        cli.main(arguments)
 
     assert error.value.code == 2
 

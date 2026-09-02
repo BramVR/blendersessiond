@@ -21,6 +21,7 @@ from blendersessiond.sessions import (
     resolve_scene_path,
     start_session,
     stop_session,
+    validate_session_id,
     validate_session_name,
 )
 from blendersessiond.wire import WireError
@@ -81,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop an owned Session without saving.",
     )
     _add_name_argument(stop)
+    _add_expected_session_id_argument(stop)
     _add_json_argument(stop)
 
     call = commands.add_parser(
@@ -89,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     call.add_argument("addon_command", metavar="COMMAND")
     _add_name_argument(call)
+    _add_expected_session_id_argument(call)
     call.add_argument(
         "--params",
         default={},
@@ -193,7 +196,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "stop":
         try:
-            result = stop_session(name=args.name)
+            result = stop_session(
+                name=args.name,
+                expected_session_id=args.expect_session_id,
+            )
         except (OSError, RuntimeError, ValueError) as error:
             _print_failure(
                 command="stop",
@@ -216,6 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.addon_command,
                 params=args.params,
                 name=args.name,
+                expected_session_id=args.expect_session_id,
             )
         except (SessionError, WireError, OSError, RuntimeError, ValueError) as error:
             if args.json:
@@ -263,9 +270,26 @@ def _add_json_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_expected_session_id_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--expect-session-id",
+        required=True,
+        type=_session_id,
+        metavar="ID",
+        help="Require the exact opaque Session ID returned by start or status.",
+    )
+
+
 def _session_name(value: str) -> str:
     try:
         return validate_session_name(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _session_id(value: str) -> str:
+    try:
+        return validate_session_id(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
 
@@ -313,6 +337,9 @@ def _print_session(session: dict[str, Any]) -> None:
         f"(pid {session.get('pid', 'unknown')}, "
         f"MCP port {session.get('mcp_port', 'unknown')})"
     )
+    session_id = session.get("session_id")
+    if isinstance(session_id, str):
+        print(f"  Session ID: {session_id}")
     logs = session.get("logs")
     if isinstance(logs, dict):
         print(f"  stdout log: {logs.get('stdout')}")

@@ -22,6 +22,9 @@ Blender lifecycle, Blender MCP startup, and direct addon calls.
   choose another name or ask; never replace that Session.
 - Give concurrent or task-specific Sessions distinct names. Use the same
   `--name` for every lifecycle command and MCP registration.
+- Retain the exact `session_id` returned by `start` or `status`. Pass it as
+  `--expect-session-id` to every `call` and `stop`; a Session Name is not
+  authority and may now route to a replacement lifecycle.
 - Use absolute paths. `--scene` must identify an existing `.blend` file.
 - Prefer Blender MCP tools for normal scene work. Use raw `call` for bootstrap,
   focused fallback, or diagnostics; `execute_code` runs arbitrary Python.
@@ -60,19 +63,24 @@ Blender lifecycle, Blender MCP startup, and direct addon calls.
    blendersessiond start --name "$SESSION" --scene /absolute/shot.blend --json
    ```
 
+   Set `SESSION_ID` to the exact `session.session_id` from that JSON response.
+   When reusing a healthy Session, take the current ID from `status --json`.
+
 4. Perform the requested work. Prefer the configured Blender MCP server. For a
    direct addon command:
 
    ```bash
-   blendersessiond call get_scene_info --name "$SESSION"
+   blendersessiond call get_scene_info --name "$SESSION" \
+     --expect-session-id "$SESSION_ID"
    blendersessiond call get_object_info --name "$SESSION" \
-     --params '{"name":"Cube"}'
+     --params '{"name":"Cube"}' --expect-session-id "$SESSION_ID"
    ```
 
 5. Verify scene state and Session Health after meaningful changes:
 
    ```bash
-   blendersessiond call get_scene_info --name "$SESSION"
+   blendersessiond call get_scene_info --name "$SESSION" \
+     --expect-session-id "$SESSION_ID"
    blendersessiond status --name "$SESSION" --json
    ```
 
@@ -80,14 +88,16 @@ Blender lifecycle, Blender MCP startup, and direct addon calls.
 
    ```bash
    blendersessiond call execute_code --name "$SESSION" \
-     --params '{"code":"bpy.ops.wm.save_mainfile()"}'
+     --params '{"code":"bpy.ops.wm.save_mainfile()"}' \
+     --expect-session-id "$SESSION_ID"
    ```
 
    Give a new scene a path:
 
    ```bash
    blendersessiond call execute_code --name "$SESSION" \
-     --params '{"code":"bpy.ops.wm.save_as_mainfile(filepath=\"/absolute/scene.blend\")"}'
+     --params '{"code":"bpy.ops.wm.save_as_mainfile(filepath=\"/absolute/scene.blend\")"}' \
+     --expect-session-id "$SESSION_ID"
    ```
 
 7. Stop only when requested or when cleaning up a Session started for this task.
@@ -95,7 +105,8 @@ Blender lifecycle, Blender MCP startup, and direct addon calls.
 
    ```bash
    blendersessiond status --name "$SESSION" --json
-   blendersessiond stop --name "$SESSION" --json
+   blendersessiond stop --name "$SESSION" \
+     --expect-session-id "$SESSION_ID" --json
    ```
 
    If `unsaved_changes` is `true`, save first or ask for the destination. If it
@@ -121,7 +132,9 @@ Session:
 `mcp-serve` requires `uvx`, validates Session Health, then connects the pinned
 `blender-mcp` server to that Session. It does not start Blender. If an MCP
 connection already failed because no healthy Session existed, start the Session
-and reconnect or restart the MCP client; use direct `call` as a focused fallback.
+and reconnect or restart the MCP client; use identity-fenced direct `call` as a
+focused fallback. The stdio bridge is name-routed and does not provide the
+per-request Session identity fence required by remote orchestration.
 
 ## Recovery
 

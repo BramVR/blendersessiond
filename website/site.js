@@ -1,12 +1,12 @@
 const lifecycle = {
   doctor: ["blendersessiond doctor", "ready to host a Session"],
-  start: ["blendersessiond start --name demo", 'Session "demo" healthy on 127.0.0.1:51842'],
-  call: ["blendersessiond call get_scene_info --name demo", 'scene "(Unsaved)" · 3 objects · active Cube'],
+  start: ["blendersessiond start --name demo", 'Session "demo" healthy · ID bss_…'],
+  call: ["blendersessiond call get_scene_info --name demo --expect-session-id $SESSION_ID", 'scene "(Unsaved)" · 3 objects · active Cube'],
   save: [
-    `blendersessiond call execute_code --name demo --params '{"code":"bpy.ops.wm.save_mainfile()"}'`,
+    `blendersessiond call execute_code --name demo --params '{"code":"bpy.ops.wm.save_mainfile()"}' --expect-session-id $SESSION_ID`,
     "scene saved explicitly",
   ],
-  stop: ["blendersessiond stop --name demo", "owned process tree stopped · logs retained"],
+  stop: ["blendersessiond stop --name demo --expect-session-id $SESSION_ID", "owned process tree stopped · logs retained"],
 };
 
 const stepButtons = document.querySelectorAll("[data-step]");
@@ -138,8 +138,9 @@ const copyStatus = document.querySelector("[data-copy-status]");
 const quickstartCommands = `git clone https://github.com/BramVR/blendersessiond.git
 uv tool install ./blendersessiond
 blendersessiond doctor
-blendersessiond start --name demo
-blendersessiond call get_scene_info --name demo`;
+blendersessiond start --name demo --json
+SESSION_ID=bss_replace_with_session_id_from_start
+blendersessiond call get_scene_info --name demo --expect-session-id "$SESSION_ID"`;
 
 function reportCopy(message, buttonLabel) {
   copyStatus.textContent = message;
