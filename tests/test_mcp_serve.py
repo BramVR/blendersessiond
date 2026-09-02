@@ -214,13 +214,13 @@ def test_named_sessions_exec_uvx_with_their_own_ports_and_stdio(
 
     assert records == {
         "first": {
-            "argv": ["blender-mcp==1.6.4"],
+            "argv": ["--with", "mcp==1.29.1", "blender-mcp==1.6.4"],
             "host": "127.0.0.1",
             "port": str(first.payload["session"]["mcp_port"]),
             "telemetry_disabled": "true",
         },
         "second": {
-            "argv": ["blender-mcp==1.6.4"],
+            "argv": ["--with", "mcp==1.29.1", "blender-mcp==1.6.4"],
             "host": "127.0.0.1",
             "port": str(second.payload["session"]["mcp_port"]),
             "telemetry_disabled": "true",

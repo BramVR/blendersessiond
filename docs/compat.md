@@ -9,10 +9,11 @@ The pinned source URL is:
 
 The validated server requirement is defined by
 [`VALIDATED_SERVER_REQUIREMENT`](../src/blendersessiond/mcp_serve.py), currently
-`blender-mcp==1.6.4`. The validated invocation is
-`uvx blender-mcp==1.6.4`. `mcp-serve` passes that explicit requirement to
-`uvx`, so the validated version is used even when another `blender-mcp` tool
-is installed.
+`blender-mcp==1.6.4`. Its compatible MCP SDK is pinned by
+`VALIDATED_MCP_REQUIREMENT`, currently `mcp==1.29.1`. The validated invocation
+is `uvx --with mcp==1.29.1 blender-mcp==1.6.4`. `mcp-serve` passes both exact
+requirements to `uvx`, so dependency drift cannot replace the compatible
+`mcp.server.fastmcp` API beneath the pinned BlenderMCP server.
 
 The real-Blender smoke workflow pins Blender `5.2.0`, including per-platform
 download URLs and SHA-256 checksums, in
@@ -48,7 +49,7 @@ deliberate compatibility changes:
 1. Select an upstream `ahujasid/blender-mcp` commit and a compatible released `blender-mcp` server version.
 2. Download that commit's unmodified `addon.py` to a temporary path; apply only the managed-Session changes summarized above to `src/blendersessiond/vendor/addon.py`.
 3. Regenerate `src/blendersessiond/vendor/addon.patch` as the complete unified diff from the pinned upstream file to the vendored file.
-4. Update the commit and source URL in this document and the patch header; update `VALIDATED_SERVER_REQUIREMENT` and this document when the validated server version changes.
+4. Update the commit and source URL in this document and the patch header; update `VALIDATED_SERVER_REQUIREMENT`, `VALIDATED_MCP_REQUIREMENT`, and this document when either validated server dependency changes.
 5. Run `uv run ruff check .`, `uv run pytest`, and the real-Blender addon, direct-call, MCP stdio, scene, unsaved-changes, and stop-never-saves smoke against the pins.
 6. Commit the vendored addon, patch, compatibility record, server pin, and resulting tests together only after the real round trip passes.
 
