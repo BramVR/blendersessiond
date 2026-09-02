@@ -71,6 +71,30 @@ def test_best_effort_stop_uses_exact_session_identity(monkeypatch) -> None:
     }
 
 
+def test_cleanup_does_not_adopt_identity_by_session_name(
+    monkeypatch,
+    capsys,
+) -> None:
+    def unexpected_stop(*_args, **_kwargs):
+        raise AssertionError("cleanup adopted authority without an exact ID")
+
+    monkeypatch.setattr(
+        real_blender_smoke,
+        "_best_effort_stop",
+        unexpected_stop,
+    )
+
+    real_blender_smoke._cleanup_started_session(
+        "ci-real-blender",
+        None,
+        {},
+    )
+
+    assert capsys.readouterr().err == (
+        "Cleanup skipped: start returned no exact Session identity.\n"
+    )
+
+
 def test_wait_for_health_waits_for_unsaved_changes(monkeypatch) -> None:
     payloads = iter(
         [

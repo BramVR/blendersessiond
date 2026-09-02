@@ -241,8 +241,8 @@ def main() -> int:
         )
     except (OSError, SmokeFailure, subprocess.SubprocessError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
-        if not stop_succeeded and session_id is not None:
-            _best_effort_stop(args.name, session_id, environment)
+        if not stop_succeeded:
+            _cleanup_started_session(args.name, session_id, environment)
         _print_log_tails(session_logs, state_dir)
         return 1
 
@@ -752,6 +752,22 @@ def _best_effort_stop(
         )
     except (OSError, SmokeFailure, subprocess.SubprocessError) as error:
         print(f"Cleanup failed: {error}", file=sys.stderr)
+
+
+def _cleanup_started_session(
+    name: str,
+    session_id: str | None,
+    environment: dict[str, str],
+) -> None:
+    if session_id is None:
+        # A lookup by reusable Session Name could adopt and stop a concurrent
+        # winner. Failed start returned no authority, so cleanup must fail closed.
+        print(
+            "Cleanup skipped: start returned no exact Session identity.",
+            file=sys.stderr,
+        )
+        return
+    _best_effort_stop(name, session_id, environment)
 
 
 def _log_paths(session: dict[str, Any]) -> set[Path]:
