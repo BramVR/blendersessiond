@@ -30,6 +30,14 @@ from blendersessiond.wire import (
     WireError,
 )
 
+BLENDER_BOX_CONTRACT = "blender-box-v1"
+BLENDER_BOX_CAPABILITIES = [
+    "opaque-session-identity",
+    "expect-session-id-call",
+    "expect-session-id-stop",
+    "bounded-call-read-timeout",
+]
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -37,6 +45,18 @@ def build_parser() -> argparse.ArgumentParser:
         description="Own Blender Sessions for agent workflows.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    capabilities = commands.add_parser(
+        "capabilities",
+        help="Report a required machine-readable integration contract.",
+    )
+    capabilities.add_argument(
+        "--require",
+        required=True,
+        choices=[BLENDER_BOX_CONTRACT],
+        metavar="CONTRACT",
+        help="Require one exact supported integration contract.",
+    )
 
     doctor = commands.add_parser(
         "doctor",
@@ -122,6 +142,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "capabilities":
+        print(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "status": "compatible",
+                    "contract": args.require,
+                    "capabilities": BLENDER_BOX_CAPABILITIES,
+                },
+                indent=2,
+            )
+        )
+        return 0
 
     if args.command == "doctor":
         try:
