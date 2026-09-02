@@ -15,6 +15,30 @@ from blendersessiond.wire import AddonError
 SESSION_ID = "bss_" + "a" * 32
 
 
+def test_capabilities_reports_required_blender_box_contract(capsys) -> None:
+    exit_code = cli.main(["capabilities", "--require", "blender-box-v1"])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "schema_version": 1,
+        "status": "compatible",
+        "contract": "blender-box-v1",
+        "capabilities": [
+            "opaque-session-identity",
+            "expect-session-id-call",
+            "expect-session-id-stop",
+            "bounded-call-read-timeout",
+        ],
+    }
+
+
+def test_capabilities_rejects_unknown_contract() -> None:
+    with pytest.raises(SystemExit) as error:
+        cli.main(["capabilities", "--require", "unknown-v1"])
+
+    assert error.value.code == 2
+
+
 @pytest.mark.parametrize("verb", ["doctor", "start", "status", "stop"])
 def test_relative_state_override_is_machine_readable_error(verb: str) -> None:
     environment = dict(os.environ)

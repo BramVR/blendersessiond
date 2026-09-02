@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `capabilities --require blender-box-v1` reports the exact identity-fencing and bounded-call contract for remote wrappers without touching Session state.
+
 ### Changed
 
 - `call` and `stop` now require the exact opaque Session ID returned by `start` or `status`, preventing stale callers from acting on a replacement Session that reused the same name.

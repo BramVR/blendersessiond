@@ -104,6 +104,7 @@ factory-empty file.
 
 ## Commands
 
+- `capabilities`: Require and report a versioned machine integration contract without touching Session state.
 - `doctor`: Check whether this machine can host a Session and report recorded Session Health.
 - `start`: Launch and own a Blender Session, optionally from an existing scene.
 - `status`: Report one named Session or list every recorded Session.
@@ -116,6 +117,13 @@ Run `blendersessiond COMMAND --help` for each command's flags. `doctor`,
 successful `call` invocations always print the addon's JSON result, while
 `call --json` also makes failures machine-readable. `mcp-serve` reserves
 standard input and output for the MCP protocol.
+
+Remote wrappers can fail closed on the exact Blender Box contract without
+launching Blender or reading Session state:
+
+```console
+blendersessiond capabilities --require blender-box-v1
+```
 
 Raw calls wait up to 180 seconds by default. Use `call --read-timeout SECONDS`
 for a known long render or script, up to the hard 3,600-second maximum. Keep an
