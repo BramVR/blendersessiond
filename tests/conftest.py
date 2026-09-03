@@ -6,11 +6,13 @@ import socket
 import subprocess
 import sys
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from blendersessiond import setup_owner
 from blendersessiond.processes import (
     owned_tree_exists,
     terminate_owned_tree,
@@ -23,6 +25,18 @@ from blendersessiond.state import STATE_DIR_ENV_VAR
 class CliResult:
     completed: subprocess.CompletedProcess[str]
     payload: dict
+
+
+@pytest.fixture
+def bypass_setup_path_authority(monkeypatch):
+    guarded = setup_owner._guard_setup_path
+
+    @contextmanager
+    def unguarded(*_args, **_kwargs):
+        yield
+
+    monkeypatch.setattr(setup_owner, "_guard_setup_path", unguarded)
+    return guarded
 
 
 def _free_mcp_port_base(span: int = 8) -> int:

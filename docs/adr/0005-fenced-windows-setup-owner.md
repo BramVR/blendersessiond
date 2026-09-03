@@ -33,26 +33,47 @@ Each attempt has three create-once JSON records under `setup-attempts`:
 - `launch-receipt.json` records the detached keeper and suspended root process identities before resume.
 - `terminal.json` records process outcome, bounded output, and whether cleanup is proven.
 
-The detached keeper creates a kill-on-close Job Object, then creates system
-PowerShell suspended with `PROC_THREAD_ATTRIBUTE_JOB_LIST`. The child inherits
-only its three standard-stream pipe handles. The keeper durably publishes the
-launch receipt before it resumes the root process. It sends the already
-validated script bytes through standard input to a fixed bootstrap. That
-bootstrap checks the exact byte count and SHA-256, decodes strict UTF-8 in
-memory, and only then invokes the script block.
+The detached keeper creates an unnamed kill-on-close Job Object, then creates
+system PowerShell suspended with `PROC_THREAD_ATTRIBUTE_JOB_LIST`. Because the
+Job has no name and its handle is not inherited, the child cannot reopen or
+retain it. The child inherits only its three standard-stream pipe handles. The
+keeper durably publishes the launch receipt before it resumes the root process.
+It sends the already validated script bytes through standard input to a fixed
+bootstrap. That bootstrap checks the exact byte count and SHA-256, decodes
+strict UTF-8 in memory, and only then invokes the script block.
+
+Every state, attempt, record, marker, and script access opens the complete
+Windows path chain without delete sharing and with reparse-point traversal
+disabled. The owner rejects a reparse point in any ancestor. The authority root
+must exist with DACL inheritance disabled. The owner also rejects a target with
+a null DACL, an untrusted owner, or write-capable allow entries—including
+inherit-only entries—for principals other than the interactive user, Local
+System, built-in Administrators, and Creator Owner. Reserved compound allow
+entries fail closed instead of being ignored. The handles remain open for the
+protected operation so an ancestor cannot be renamed underneath it.
 
 Status and stop require the complete Attempt, request-hash, and Launch fence.
 Normal stop asks the exact keeper to terminate its Job. Fallback termination
 opens the recorded keeper once and verifies its creation FILETIME through that
-handle. PID lookup alone never authorizes termination. Owner-loss recovery
-claims `tree_gone` only after the exact keeper and root are absent and the
-named Job no longer exists. Otherwise the immutable terminal is
+handle. PID lookup alone never authorizes termination. If a new unnamed-Job
+keeper disappears before publishing a terminal, recovery cannot prove that no
+same-token process duplicated its handle, so it records `cleanup_unverified`
+even when the recorded keeper and root are gone. Access or query failure is
+also unknown, not absence. Status reports the nonterminal,
+`ownership_unverified` state so the caller can retry. Stop still attempts the
+exact identity-fenced keeper termination, but reports the same retryable state
+if process access or termination fails; it does not make that transient failure
+immutable. Receipts from the earlier named-Job implementation remain readable
+during upgrade, but recovery never treats absence of their session-local Job
+name as proof that the tree is gone. A live legacy keeper may still publish its
+own terminal after stop; owner-loss or fallback recovery reports
 `cleanup_unverified`.
 
 `windows-setup-owner-v1` is a runtime capability. Its probe creates an inert
 suspended child with the same atomic Job-list mechanism, verifies membership,
-terminates the Job before resume, and proves that it has no members. Missing
-API support or an incompatible outer Job policy fails closed.
+closes the keeper's sole Job handle before resume, and proves kill-on-close by
+observing the root process exit. Missing API support or an incompatible outer
+Job policy fails closed.
 
 ## Consequences
 
@@ -61,6 +82,8 @@ without broad process discovery. A stale caller cannot act on a replacement
 attempt. The keeper is the only process that retains the Job handle, so its
 loss terminates the setup tree.
 
-The protocol is Windows-only and private to Blender Box setup. Staging and its
-ACL handoff remain Blender Box responsibilities. The owner rejects a staged
-artifact that does not match the immutable request.
+The protocol is Windows-only and private to Blender Box setup. Blender Box must
+stage into an authority root with an explicit private DACL; inherited temporary
+or profile-directory ACLs are not assumed safe. The owner independently
+validates that path authority and rejects an artifact that does not match the
+immutable request.

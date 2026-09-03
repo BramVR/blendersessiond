@@ -12,13 +12,15 @@ import pytest
 
 from blendersessiond import setup_owner, windows_setup_process
 
+pytestmark = pytest.mark.usefixtures("bypass_setup_path_authority")
+
 
 class FakeWin32:
     def __init__(self) -> None:
         self.calls: list[object] = []
 
-    def create_job(self, name: str):
-        self.calls.append(("create_job", name))
+    def create_job(self):
+        self.calls.append(("create_job", None))
         return "job"
 
     def set_kill_on_close(self, job) -> None:
@@ -62,8 +64,8 @@ def test_process_is_suspended_and_atomically_assigned_before_receipt(
     owned = windows_setup_process.WindowsSetupProcess.create_suspended(
         api=api,
         powershell_path=tmp_path / "powershell.exe",
-        job_name="Local\\BlenderSessiond.Setup.bbsl_test",
     )
+    assert api.calls[0] == ("create_job", None)
     assert [call if isinstance(call, str) else call[0] for call in api.calls] == [
         "create_job",
         "set_kill_on_close",
@@ -91,7 +93,6 @@ def test_process_creation_rejects_a_child_outside_the_job(tmp_path: Path) -> Non
         windows_setup_process.WindowsSetupProcess.create_suspended(
             api=api,
             powershell_path=tmp_path / "powershell.exe",
-            job_name="Local\\BlenderSessiond.Setup.bbsl_test",
         )
     closed = [
         call[1]
@@ -197,6 +198,42 @@ def test_stdin_writer_keeps_the_owned_handle_when_the_field_is_cleared(
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows Job Objects")
 def test_concrete_windows_job_list_runtime_self_test() -> None:
     windows_setup_process.runtime_self_test()
+
+
+def test_exact_process_state_keeps_access_failure_unknown(monkeypatch) -> None:
+    class Kernel:
+        def OpenProcess(self, *_args):
+            return 0
+
+    api = type("API", (), {"kernel": Kernel()})()
+    monkeypatch.setattr(
+        windows_setup_process.ctypes,
+        "get_last_error",
+        lambda: 5,
+        raising=False,
+    )
+    assert windows_setup_process.exact_process_state(10, "windows:1", api=api) == (
+        "unknown"
+    )
+
+
+def test_truncated_output_keeps_only_a_valid_utf8_prefix() -> None:
+    content = "snowman ☃".encode()[:-1]
+    assert windows_setup_process._valid_utf8_prefix(
+        content, truncated=True
+    ) == b"snowman "
+
+
+def test_truncated_output_drops_bytes_after_first_invalid_sequence() -> None:
+    content = b"valid\xffalso-valid"
+    assert windows_setup_process._valid_utf8_prefix(
+        content, truncated=True
+    ) == b"valid"
+
+
+def test_untruncated_invalid_output_fails_closed() -> None:
+    with pytest.raises(UnicodeDecodeError):
+        windows_setup_process._valid_utf8_prefix(b"valid\xff", truncated=False)
 
 
 def _attempt(tmp_path: Path, deadline: datetime) -> Path:
@@ -334,7 +371,7 @@ def test_keeper_resumes_while_the_attempt_lock_is_held(
         raise OSError("stop after observation")
 
     owned.resume = resume
-    monkeypatch.setattr(windows_setup_process, "file_lock", tracked_lock)
+    monkeypatch.setattr(setup_owner, "_setup_lock", tracked_lock)
     monkeypatch.setattr(
         windows_setup_process.WindowsSetupProcess,
         "create_suspended",
@@ -427,3 +464,43 @@ def test_empty_job_after_deadline_is_still_timed_out(
     )
     assert outcome == "timed_out"
     assert terminated == []
+
+
+def test_descendant_wait_uses_a_monotonic_deadline(
+    tmp_path: Path, monkeypatch
+) -> None:
+    wall_deadline = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    terminated: list[bool] = []
+    owned = type(
+        "Owned",
+        (),
+        {
+            "empty": lambda _self: False,
+            "terminate": lambda _self: terminated.append(True),
+        },
+    )()
+
+    class Clock:
+        @classmethod
+        def now(cls, _tz=None) -> datetime:
+            return wall_deadline - timedelta(days=1)
+
+    monkeypatch.setattr(windows_setup_process, "datetime", Clock)
+    monkeypatch.setattr(windows_setup_process.time, "monotonic", lambda: 11.0)
+    outcome = windows_setup_process._wait_for_owned_job(
+        owned,
+        wall_deadline,
+        tmp_path / ".stop",
+        monotonic_deadline=10.0,
+    )
+    assert outcome == "timed_out"
+    assert terminated == [True]
+
+
+def test_truncated_output_keeps_only_valid_utf8() -> None:
+    content = b"a" * (windows_setup_process._MAX_STREAM_BYTES - 1) + "€".encode()
+    bounded = windows_setup_process._valid_utf8_prefix(
+        content[: windows_setup_process._MAX_STREAM_BYTES],
+        truncated=True,
+    )
+    assert bounded == b"a" * (windows_setup_process._MAX_STREAM_BYTES - 1)

@@ -379,7 +379,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 1
         _print_result(result.to_dict(), as_json=args.json)
-        return 0
+        if getattr(result, "ownership_unverified", False):
+            return 1
+        terminal = getattr(result, "terminal", None)
+        if terminal is None:
+            return 0
+        if args.setup_owner_command == "stop":
+            return 0 if terminal.cleanup == "tree_gone" else 1
+        return 0 if terminal.succeeded else 1
 
     raise AssertionError(f"unhandled command: {args.command}")
 

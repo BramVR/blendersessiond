@@ -3,12 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from blendersessiond import setup_owner
+
+pytestmark = pytest.mark.usefixtures("bypass_setup_path_authority")
 
 ATTEMPT_ID = "bbsa_" + "A" * 43
 LAUNCH_ID = "bbsl_" + "B" * 43
@@ -101,6 +104,7 @@ def test_byte_identical_replay_remains_valid_after_deadline(tmp_path: Path) -> N
             ),
             "artifact_id",
         ),
+        (lambda value: value | {"deadline_utc": float("nan")}, "UTF-8 JSON"),
     ],
 )
 def test_request_is_strictly_bounded(tmp_path: Path, mutate, message: str) -> None:
@@ -112,6 +116,21 @@ def test_request_is_strictly_bounded(tmp_path: Path, mutate, message: str) -> No
             state_root=tmp_path,
             now=now,
         )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"schema_version":1,"schema_version":1}',
+        raw_launch(datetime(2026, 9, 3, 12, tzinfo=UTC)).decode().encode("utf-16"),
+        b"\xef\xbb\xbf{}",
+    ],
+)
+def test_request_rejects_duplicate_or_non_utf8_json(
+    tmp_path: Path, raw: bytes
+) -> None:
+    with pytest.raises(setup_owner.SetupOwnerError, match="UTF-8 JSON"):
+        setup_owner.accept_launch_request(raw, state_root=tmp_path)
 
 
 def test_stop_before_dispatch_requires_full_fence_and_is_immutable(
@@ -285,7 +304,7 @@ def test_active_launch_replay_does_not_dispatch_twice(tmp_path: Path) -> None:
             keeper_creation_time="windows:10",
             root_pid=11,
             root_creation_time="windows:11",
-            job_name=setup_owner._job_name(request.launch_id),
+            job_scope=setup_owner.JOB_SCOPE,
             owned_at=now,
         )
         setup_owner._write_create_once(
@@ -327,7 +346,7 @@ def test_launch_timeout_rechecks_a_concurrent_receipt(
             keeper_creation_time="windows:10",
             root_pid=11,
             root_creation_time="windows:11",
-            job_name=setup_owner._job_name(request.launch_id),
+            job_scope=setup_owner.JOB_SCOPE,
             owned_at=now,
         )
         setup_owner._write_create_once(
@@ -346,6 +365,54 @@ def test_launch_timeout_rechecks_a_concurrent_receipt(
     assert result.terminal is None
 
 
+def test_spawn_failure_is_an_immutable_terminal(tmp_path: Path, monkeypatch) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    stage_script(tmp_path)
+    monkeypatch.setattr(
+        setup_owner,
+        "_spawn_keeper",
+        lambda _directory: (_ for _ in ()).throw(OSError("spawn failed")),
+    )
+    first = setup_owner.launch_setup(
+        raw_launch(now),
+        state_root=tmp_path,
+        now=now,
+        platform_name="Windows",
+    )
+    second = setup_owner.launch_setup(
+        raw_launch(now),
+        state_root=tmp_path,
+        now=now,
+        platform_name="Windows",
+    )
+    assert first == second
+    assert first.terminal.outcome == "launch_failed"
+    assert first.terminal.cleanup == "cleanup_unverified"
+
+
+def test_status_requires_well_formed_complete_fences(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    request = setup_owner.accept_launch_request(
+        raw_launch(now), state_root=tmp_path, now=now
+    )
+    with pytest.raises(setup_owner.SetupOwnerError, match="SHA-256"):
+        setup_owner.status_setup(
+            ATTEMPT_ID,
+            expected_request_sha256="short",
+            expected_launch_id=LAUNCH_ID,
+            state_root=tmp_path,
+            platform_name="Windows",
+        )
+    with pytest.raises(setup_owner.SetupOwnerError, match="Launch ID"):
+        setup_owner.status_setup(
+            ATTEMPT_ID,
+            expected_request_sha256=request.request_sha256,
+            expected_launch_id="short",
+            state_root=tmp_path,
+            platform_name="Windows",
+        )
+
+
 def test_only_three_json_records_define_attempt_state(tmp_path: Path) -> None:
     now = datetime(2026, 9, 3, 12, tzinfo=UTC)
     stage_script(tmp_path)
@@ -362,7 +429,7 @@ def test_only_three_json_records_define_attempt_state(tmp_path: Path) -> None:
     assert names <= {"request.json", "launch-receipt.json", "terminal.json"}
 
 
-def test_owner_loss_is_persisted_only_after_tree_and_job_are_absent(
+def test_unnamed_job_owner_loss_never_claims_tree_gone(
     tmp_path: Path, monkeypatch
 ) -> None:
     now = datetime(2026, 9, 3, 12, tzinfo=UTC)
@@ -378,12 +445,11 @@ def test_owner_loss_is_persisted_only_after_tree_and_job_are_absent(
         keeper_creation_time="windows:10",
         root_pid=11,
         root_creation_time="windows:11",
-        job_name=setup_owner._job_name(LAUNCH_ID),
+        job_scope=setup_owner.JOB_SCOPE,
         owned_at=now,
     )
     setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
     monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: False)
-    monkeypatch.setattr(setup_owner, "_job_exists", lambda _name: False)
 
     first = setup_owner.status_setup(
         ATTEMPT_ID,
@@ -400,8 +466,8 @@ def test_owner_loss_is_persisted_only_after_tree_and_job_are_absent(
         platform_name="Windows",
     )
     assert first == second
-    assert first.terminal.outcome == "owner_lost"
-    assert first.terminal.cleanup == "tree_gone"
+    assert first.terminal.outcome == "cleanup_unverified"
+    assert first.terminal.cleanup == "cleanup_unverified"
 
 
 def test_pid_reuse_is_safe(tmp_path: Path, monkeypatch) -> None:
@@ -418,12 +484,11 @@ def test_pid_reuse_is_safe(tmp_path: Path, monkeypatch) -> None:
         keeper_creation_time="windows:old",
         root_pid=11,
         root_creation_time="windows:old-root",
-        job_name=setup_owner._job_name(LAUNCH_ID),
+        job_scope=setup_owner.JOB_SCOPE,
         owned_at=now,
     )
     setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
     monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: False)
-    monkeypatch.setattr(setup_owner, "_job_exists", lambda _name: True)
     monkeypatch.setattr(setup_owner, "_STOP_WAIT_SECONDS", 0)
     from blendersessiond import windows_setup_process
 
@@ -444,7 +509,48 @@ def test_pid_reuse_is_safe(tmp_path: Path, monkeypatch) -> None:
     assert result.terminal.cleanup == "cleanup_unverified"
 
 
-def test_owner_loss_job_query_error_is_cleanup_unverified(
+@pytest.mark.parametrize("operation", ["status", "stop"])
+def test_legacy_named_job_receipt_recovery_is_unverified(
+    operation: str, tmp_path: Path, monkeypatch
+) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    request = setup_owner.accept_launch_request(
+        raw_launch(now), state_root=tmp_path, now=now
+    )
+    directory = tmp_path / "setup-attempts" / ATTEMPT_ID
+    receipt = setup_owner.LaunchReceipt(
+        attempt_id=ATTEMPT_ID,
+        launch_id=LAUNCH_ID,
+        request_sha256=request.request_sha256,
+        keeper_pid=10,
+        keeper_creation_time="windows:10",
+        root_pid=11,
+        root_creation_time="windows:11",
+        job_scope=None,
+        owned_at=now,
+        job_name=f"Local\\BlenderSessiond.Setup.{LAUNCH_ID}",
+    )
+    setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
+    monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: False)
+    monkeypatch.setattr(setup_owner, "_STOP_WAIT_SECONDS", 0)
+
+    recover = (
+        setup_owner.status_setup
+        if operation == "status"
+        else setup_owner.stop_setup
+    )
+    result = recover(
+        ATTEMPT_ID,
+        expected_request_sha256=request.request_sha256,
+        expected_launch_id=LAUNCH_ID,
+        state_root=tmp_path,
+        platform_name="Windows",
+    )
+    assert result.terminal.outcome == "cleanup_unverified"
+    assert result.terminal.cleanup == "cleanup_unverified"
+
+
+def test_owner_loss_process_query_error_remains_retryable(
     tmp_path: Path, monkeypatch
 ) -> None:
     now = datetime(2026, 9, 3, 12, tzinfo=UTC)
@@ -460,17 +566,12 @@ def test_owner_loss_job_query_error_is_cleanup_unverified(
         keeper_creation_time="windows:10",
         root_pid=11,
         root_creation_time="windows:11",
-        job_name=setup_owner._job_name(LAUNCH_ID),
+        job_scope=setup_owner.JOB_SCOPE,
         owned_at=now,
     )
     setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
-    monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: False)
+    monkeypatch.setattr(setup_owner, "_process_state", lambda *_args: "unknown")
     monkeypatch.setattr(setup_owner, "_OWNER_LOSS_WAIT_SECONDS", 0)
-    monkeypatch.setattr(
-        setup_owner,
-        "_job_exists",
-        lambda _name: (_ for _ in ()).throw(OSError("query failed")),
-    )
     result = setup_owner.status_setup(
         ATTEMPT_ID,
         expected_request_sha256=request.request_sha256,
@@ -478,8 +579,47 @@ def test_owner_loss_job_query_error_is_cleanup_unverified(
         state_root=tmp_path,
         platform_name="Windows",
     )
-    assert result.terminal.outcome == "cleanup_unverified"
-    assert result.terminal.cleanup == "cleanup_unverified"
+    assert result.ownership_unverified
+    assert result.terminal is None
+    assert result.to_dict()["status"] == "ownership_unverified"
+
+
+def test_owner_loss_reconciliation_returns_recovered_keeper(
+    tmp_path: Path, monkeypatch
+) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    request = setup_owner.accept_launch_request(
+        raw_launch(now), state_root=tmp_path, now=now
+    )
+    directory = tmp_path / "setup-attempts" / ATTEMPT_ID
+    receipt = setup_owner.LaunchReceipt(
+        attempt_id=ATTEMPT_ID,
+        launch_id=LAUNCH_ID,
+        request_sha256=request.request_sha256,
+        keeper_pid=10,
+        keeper_creation_time="windows:10",
+        root_pid=11,
+        root_creation_time="windows:11",
+        job_scope=setup_owner.JOB_SCOPE,
+        owned_at=now,
+    )
+    setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
+    keeper_states = iter(["absent", "matches"])
+
+    def process_state(pid: int, _identity: str) -> str:
+        return next(keeper_states) if pid == receipt.keeper_pid else "absent"
+
+    monkeypatch.setattr(setup_owner, "_process_state", process_state)
+    monkeypatch.setattr(setup_owner, "_OWNER_LOSS_WAIT_SECONDS", 0)
+    result = setup_owner.status_setup(
+        ATTEMPT_ID,
+        expected_request_sha256=request.request_sha256,
+        expected_launch_id=LAUNCH_ID,
+        state_root=tmp_path,
+        platform_name="Windows",
+    )
+    assert result.receipt == receipt
+    assert result.terminal is None
 
 
 def test_keeper_loss_reconciles_while_the_root_still_exists(
@@ -498,7 +638,7 @@ def test_keeper_loss_reconciles_while_the_root_still_exists(
         keeper_creation_time="windows:10",
         root_pid=11,
         root_creation_time="windows:11",
-        job_name=setup_owner._job_name(LAUNCH_ID),
+        job_scope=setup_owner.JOB_SCOPE,
         owned_at=now,
     )
     setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
@@ -508,7 +648,6 @@ def test_keeper_loss_reconciles_while_the_root_still_exists(
         lambda pid, _identity: pid == receipt.root_pid,
     )
     monkeypatch.setattr(setup_owner, "_OWNER_LOSS_WAIT_SECONDS", 0)
-    monkeypatch.setattr(setup_owner, "_job_exists", lambda _name: True)
     result = setup_owner.status_setup(
         ATTEMPT_ID,
         expected_request_sha256=request.request_sha256,
@@ -520,7 +659,7 @@ def test_keeper_loss_reconciles_while_the_root_still_exists(
     assert result.terminal.cleanup == "cleanup_unverified"
 
 
-def test_keeper_termination_error_is_cleanup_unverified(
+def test_keeper_termination_error_remains_retryable(
     tmp_path: Path, monkeypatch
 ) -> None:
     now = datetime(2026, 9, 3, 12, tzinfo=UTC)
@@ -536,11 +675,11 @@ def test_keeper_termination_error_is_cleanup_unverified(
         keeper_creation_time="windows:10",
         root_pid=11,
         root_creation_time="windows:11",
-        job_name=setup_owner._job_name(LAUNCH_ID),
+        job_scope=setup_owner.JOB_SCOPE,
         owned_at=now,
     )
     setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
-    monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: True)
+    monkeypatch.setattr(setup_owner, "_process_state", lambda *_args: "matches")
     monkeypatch.setattr(setup_owner, "_STOP_WAIT_SECONDS", 0)
     from blendersessiond import windows_setup_process
 
@@ -556,8 +695,8 @@ def test_keeper_termination_error_is_cleanup_unverified(
         state_root=tmp_path,
         platform_name="Windows",
     )
-    assert result.terminal.outcome == "cleanup_unverified"
-    assert result.terminal.cleanup == "cleanup_unverified"
+    assert result.ownership_unverified
+    assert result.terminal is None
 
 
 def test_staged_script_read_is_bounded_to_the_declared_size(
@@ -596,6 +735,55 @@ def test_staged_script_read_is_bounded_to_the_declared_size(
     monkeypatch.setattr(Path, "open", open_spy)
     assert setup_owner.read_staged_script(tmp_path, request) == SCRIPT
     assert read_sizes == [len(SCRIPT) + 1]
+
+
+def test_missing_staged_script_guard_uses_domain_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    request = setup_owner.accept_launch_request(
+        raw_launch(now), state_root=tmp_path, now=now
+    )
+
+    @contextmanager
+    def missing_guard(*_args, **_kwargs):
+        raise FileNotFoundError("missing")
+        yield
+
+    monkeypatch.setattr(setup_owner, "_guard_setup_path", missing_guard)
+    with pytest.raises(setup_owner.SetupOwnerError, match="missing"):
+        setup_owner.read_staged_script(tmp_path, request)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("path query failed"),
+        pytest.param(None, id="authority-rejection"),
+    ],
+)
+def test_path_authority_rejection_uses_setup_owner_error(
+    error: OSError | None,
+    tmp_path: Path,
+    monkeypatch,
+    bypass_setup_path_authority,
+) -> None:
+    from blendersessiond import windows_path_authority
+
+    rejection = error or windows_path_authority.PathAuthorityError(
+        "untrusted authority"
+    )
+
+    @contextmanager
+    def rejected(*_args, **_kwargs):
+        raise rejection
+        yield
+
+    monkeypatch.setattr(windows_path_authority, "guard_path", rejected)
+    monkeypatch.setattr(setup_owner.os, "name", "nt")
+    with pytest.raises(setup_owner.SetupOwnerError, match=str(rejection)):
+        with bypass_setup_path_authority(tmp_path):
+            pass
 
 
 @pytest.mark.parametrize(
@@ -736,5 +924,9 @@ def test_status_terminalizes_an_expired_dispatch_without_a_receipt(
 def test_non_windows_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(setup_owner.SetupOwnerError, match="Windows"):
         setup_owner.status_setup(
-            ATTEMPT_ID, state_root=tmp_path, platform_name="Darwin"
+            ATTEMPT_ID,
+            expected_request_sha256="0" * 64,
+            expected_launch_id=LAUNCH_ID,
+            state_root=tmp_path,
+            platform_name="Darwin",
         )
