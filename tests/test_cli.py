@@ -48,6 +48,73 @@ def test_capabilities_accepts_required_typed_call_error_reason(capsys) -> None:
     assert json.loads(capsys.readouterr().out)["status"] == "compatible"
 
 
+def test_setup_owner_cli_routes_fixed_purpose_commands(monkeypatch, capsys) -> None:
+    captured: list[tuple[str, dict[str, object]]] = []
+
+    def fake_launch(**kwargs):
+        captured.append(("launch", kwargs))
+        return {"schema_version": 1, "status": "owned"}
+
+    monkeypatch.setattr(cli, "launch_setup", fake_launch)
+
+    exit_code = cli.main(
+        [
+            "setup-owner",
+            "launch",
+            "--state-root",
+            "C:\\BlenderBox",
+            "--attempt-id",
+            "a" * 32,
+            "--script-sha256",
+            "b" * 64,
+            "--deadline-unix-ms",
+            "2000000000000",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured == [
+        (
+            "launch",
+            {
+                "state_root": Path("C:\\BlenderBox"),
+                "attempt_id": "a" * 32,
+                "script_sha256": "b" * 64,
+                "deadline_unix_ms": 2_000_000_000_000,
+            },
+        )
+    ]
+    assert json.loads(capsys.readouterr().out)["status"] == "owned"
+
+
+def test_setup_owner_cli_reports_machine_readable_failure(monkeypatch, capsys) -> None:
+    def fail_status(**_kwargs):
+        raise cli.SetupOwnerError("owner unavailable")
+
+    monkeypatch.setattr(cli, "status_setup", fail_status)
+
+    exit_code = cli.main(
+        [
+            "setup-owner",
+            "status",
+            "--state-root",
+            "C:\\BlenderBox",
+            "--attempt-id",
+            "a" * 32,
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "schema_version": 1,
+        "status": "error",
+        "command": "setup-owner status",
+        "message": "owner unavailable",
+    }
+
+
 def test_capabilities_rejects_unknown_contract() -> None:
     with pytest.raises(SystemExit) as error:
         cli.main(["capabilities", "--require", "unknown-v1"])
