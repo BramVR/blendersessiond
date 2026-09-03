@@ -111,6 +111,7 @@ factory-empty file.
 - `call`: Send one raw command and optional JSON parameters to a healthy Session's addon.
 - `stop`: Terminate an owned Session process tree without saving.
 - `mcp-serve`: Connect the validated `blender-mcp` stdio server to one healthy Session.
+- `setup-owner`: Own one fenced Blender Box setup process tree on Windows. This integration-only command is not a general remote command runner.
 
 Run `blendersessiond COMMAND --help` for each command's flags. `doctor`,
 `start`, `status`, and `stop` support versioned JSON output with `--json`;
@@ -128,6 +129,18 @@ blendersessiond capabilities --require blender-box-v1
 Wrappers that persist timeout state should also pass
 `--require-capability typed-call-error-reason`. With `call --json`, wire
 failures include a stable `reason`; a read-timeout expiration uses `timeout`.
+
+Blender Box setup also requires the runtime-gated Windows owner contract:
+
+```console
+blendersessiond capabilities --require blender-box-v1 --require-capability windows-setup-owner-v1
+```
+
+That probe creates an inert suspended Windows process inside a kill-on-close
+Job Object, verifies membership, and terminates it without resuming it. The
+capability fails closed when the current host context cannot provide atomic
+Job assignment. Blender Box alone drives the private `setup-owner` launch,
+status, and stop protocol with immutable Attempt and Launch identities.
 
 Raw calls wait up to 180 seconds by default. Use `call --read-timeout SECONDS`
 for a known long render or script, up to the hard 3,600-second maximum. Keep an
@@ -244,6 +257,12 @@ directory:
 Set `BLENDERSESSIOND_STATE_DIR` to an absolute path to override this location.
 `blendersessiond status` prints each Session's log paths; use `--json` when a
 script needs the complete state record.
+
+On Windows, Blender Box setup attempts use the reserved `setup-attempts`
+subdirectory below this state directory. Their request, launch receipt, and
+terminal records are create-once. The staged script name is derived from the
+Attempt ID, and the owner validates its size, SHA-256, and strict UTF-8 bytes
+again before it can resume PowerShell.
 
 Session MCP ports are allocated upward from `9876` on loopback. Set
 `BLENDERSESSIOND_BASE_MCP_PORT` to start allocation from a different port —

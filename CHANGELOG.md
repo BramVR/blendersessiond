@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A Windows-only `setup-owner` protocol gives Blender Box a fixed-purpose, identity-fenced process owner before setup code can run. Its runtime capability probe fails closed when atomic Job Object assignment is unavailable.
 - `capabilities --require blender-box-v1` reports the exact identity-fencing and bounded-call contract for remote wrappers without touching Session state; wrappers can require named capabilities before use.
 - Machine-readable `call` failures include a typed wire-error reason so orchestrators can distinguish a bounded read timeout from other failures.
 

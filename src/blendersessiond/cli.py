@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -24,6 +25,16 @@ from blendersessiond.sessions import (
     validate_session_id,
     validate_session_name,
 )
+from blendersessiond.setup_owner import (
+    MAX_REQUEST_BYTES,
+    SetupOwnerError,
+    launch_setup,
+    status_setup,
+    stop_setup,
+)
+from blendersessiond.windows_setup_process import (
+    runtime_self_test as windows_setup_owner_self_test,
+)
 from blendersessiond.wire import (
     DEFAULT_READ_TIMEOUT_SECONDS,
     MAX_READ_TIMEOUT_SECONDS,
@@ -38,6 +49,8 @@ BLENDER_BOX_CAPABILITIES = [
     "bounded-call-read-timeout",
     "typed-call-error-reason",
 ]
+WINDOWS_SETUP_OWNER_CAPABILITY = "windows-setup-owner-v1"
+_platform_system = platform.system
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     capabilities.add_argument(
         "--require-capability",
         action="append",
-        choices=BLENDER_BOX_CAPABILITIES,
+        choices=[*BLENDER_BOX_CAPABILITIES, WINDOWS_SETUP_OWNER_CAPABILITY],
         metavar="CAPABILITY",
         help="Require a named capability within the integration contract.",
     )
@@ -145,6 +158,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Serve MCP stdio for one healthy Session.",
     )
     _add_name_argument(mcp_serve)
+
+    setup_owner = commands.add_parser(
+        "setup-owner",
+        help="Own one fixed-purpose Blender Box Windows setup attempt.",
+    )
+    setup_commands = setup_owner.add_subparsers(
+        dest="setup_owner_command", required=True
+    )
+    setup_launch = setup_commands.add_parser(
+        "launch", help="Launch the exact setup request read from standard input."
+    )
+    _add_json_argument(setup_launch)
+    for command_name in ("status", "stop"):
+        setup_command = setup_commands.add_parser(command_name)
+        setup_command.add_argument("--attempt-id", required=True)
+        setup_command.add_argument("--expect-request-sha256", required=True)
+        setup_command.add_argument("--expect-launch-id", required=True)
+        _add_json_argument(setup_command)
     return parser
 
 
@@ -152,13 +183,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "capabilities":
+        capabilities = list(BLENDER_BOX_CAPABILITIES)
+        if WINDOWS_SETUP_OWNER_CAPABILITY in (args.require_capability or []):
+            try:
+                if _platform_system() != "Windows":
+                    raise RuntimeError(
+                        "Windows setup ownership is unavailable on this platform."
+                    )
+                windows_setup_owner_self_test()
+            except (OSError, RuntimeError, ValueError) as error:
+                print(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "status": "incompatible",
+                            "contract": args.require,
+                            "capability": WINDOWS_SETUP_OWNER_CAPABILITY,
+                            "message": str(error),
+                        },
+                        indent=2,
+                    )
+                )
+                return 1
+            capabilities.append(WINDOWS_SETUP_OWNER_CAPABILITY)
         print(
             json.dumps(
                 {
                     "schema_version": 1,
                     "status": "compatible",
                     "contract": args.require,
-                    "capabilities": BLENDER_BOX_CAPABILITIES,
+                    "capabilities": capabilities,
                 },
                 indent=2,
             )
@@ -298,6 +352,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (McpServeError, OSError, RuntimeError, ValueError) as error:
             print(f"ERROR: {error}", file=sys.stderr)
             return 1
+
+    if args.command == "setup-owner":
+        try:
+            if args.setup_owner_command == "launch":
+                result = launch_setup(sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1))
+            elif args.setup_owner_command == "status":
+                result = status_setup(
+                    args.attempt_id,
+                    expected_request_sha256=args.expect_request_sha256,
+                    expected_launch_id=args.expect_launch_id,
+                )
+            elif args.setup_owner_command == "stop":
+                result = stop_setup(
+                    args.attempt_id,
+                    expected_request_sha256=args.expect_request_sha256,
+                    expected_launch_id=args.expect_launch_id,
+                )
+            else:
+                raise AssertionError(args.setup_owner_command)
+        except (SetupOwnerError, OSError, RuntimeError, ValueError) as error:
+            _print_failure(
+                command=f"setup-owner {args.setup_owner_command}",
+                message=str(error),
+                as_json=args.json,
+            )
+            return 1
+        _print_result(result.to_dict(), as_json=args.json)
+        return 0
 
     raise AssertionError(f"unhandled command: {args.command}")
 

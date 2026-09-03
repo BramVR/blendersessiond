@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 import io
+import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -49,12 +50,16 @@ def test_capabilities_accepts_required_typed_call_error_reason(capsys) -> None:
     assert json.loads(capsys.readouterr().out)["status"] == "compatible"
 
 
-def test_setup_owner_launch_reads_exact_raw_json_from_stdin(monkeypatch, capsys) -> None:
+def test_setup_owner_launch_reads_exact_raw_json_from_stdin(
+    monkeypatch, capsys
+) -> None:
     raw = b'{"schema_version":1,"attempt_id":"exact bytes"}\n'
 
     def fake_launch(raw_request: bytes):
         assert raw_request == raw
-        return SimpleNamespace(to_dict=lambda: {"schema_version": 1, "status": "accepted"})
+        return SimpleNamespace(
+            to_dict=lambda: {"schema_version": 1, "status": "accepted"}
+        )
 
     monkeypatch.setattr(cli, "launch_setup", fake_launch)
     monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(raw)))
@@ -69,17 +74,30 @@ def test_setup_owner_stop_routes_complete_fence(monkeypatch, capsys) -> None:
     def fake_stop(attempt_id: str, **kwargs):
         captured["attempt_id"] = attempt_id
         captured.update(kwargs)
-        return SimpleNamespace(to_dict=lambda: {"schema_version": 1, "status": "terminal"})
+        return SimpleNamespace(
+            to_dict=lambda: {"schema_version": 1, "status": "terminal"}
+        )
 
     monkeypatch.setattr(cli, "stop_setup", fake_stop)
     attempt_id = "bbsa_" + "A" * 43
     launch_id = "bbsl_" + "B" * 43
 
-    assert cli.main([
-        "setup-owner", "stop", "--attempt-id", attempt_id,
-        "--expect-request-sha256", "c" * 64,
-        "--expect-launch-id", launch_id, "--json",
-    ]) == 0
+    assert (
+        cli.main(
+            [
+                "setup-owner",
+                "stop",
+                "--attempt-id",
+                attempt_id,
+                "--expect-request-sha256",
+                "c" * 64,
+                "--expect-launch-id",
+                launch_id,
+                "--json",
+            ]
+        )
+        == 0
+    )
     assert captured == {
         "attempt_id": attempt_id,
         "expected_request_sha256": "c" * 64,
@@ -96,17 +114,26 @@ def test_setup_owner_parser_rejects_generic_process_inputs() -> None:
         assert error.value.code == 2
 
 
-def test_windows_setup_owner_capability_fails_closed_off_windows(monkeypatch, capsys) -> None:
+def test_windows_setup_owner_capability_fails_closed_off_windows(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(cli, "_platform_system", lambda: "Linux")
-    exit_code = cli.main([
-        "capabilities", "--require", "blender-box-v1",
-        "--require-capability", "windows-setup-owner-v1",
-    ])
+    exit_code = cli.main(
+        [
+            "capabilities",
+            "--require",
+            "blender-box-v1",
+            "--require-capability",
+            "windows-setup-owner-v1",
+        ]
+    )
     assert exit_code == 1
     assert json.loads(capsys.readouterr().out)["status"] == "incompatible"
 
 
-def test_windows_setup_owner_capability_runs_runtime_self_test(monkeypatch, capsys) -> None:
+def test_windows_setup_owner_capability_runs_runtime_self_test(
+    monkeypatch, capsys
+) -> None:
     calls = 0
 
     def pass_self_test() -> None:
@@ -115,13 +142,20 @@ def test_windows_setup_owner_capability_runs_runtime_self_test(monkeypatch, caps
 
     monkeypatch.setattr(cli, "_platform_system", lambda: "Windows")
     monkeypatch.setattr(cli, "windows_setup_owner_self_test", pass_self_test)
-    exit_code = cli.main([
-        "capabilities", "--require", "blender-box-v1",
-        "--require-capability", "windows-setup-owner-v1",
-    ])
+    exit_code = cli.main(
+        [
+            "capabilities",
+            "--require",
+            "blender-box-v1",
+            "--require-capability",
+            "windows-setup-owner-v1",
+        ]
+    )
     assert exit_code == 0
     assert calls == 1
-    assert "windows-setup-owner-v1" in json.loads(capsys.readouterr().out)["capabilities"]
+    assert (
+        "windows-setup-owner-v1" in json.loads(capsys.readouterr().out)["capabilities"]
+    )
 
 
 def test_capabilities_rejects_unknown_contract() -> None:
