@@ -594,7 +594,7 @@ def _parse_request(raw: bytes) -> SetupRequest:
 def _spawn_keeper(directory: Path) -> None:
     flags = 0
     if os.name == "nt":
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        flags = _windows_keeper_creation_flags()
     with _guard_setup_path(directory):
         process = subprocess.Popen(
             [
@@ -614,6 +614,19 @@ def _spawn_keeper(directory: Path) -> None:
         raise SetupOwnerError(
             "The setup keeper exited before ownership acknowledgement."
         )
+
+
+def _windows_keeper_creation_flags() -> int:
+    try:
+        return (
+            subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_BREAKAWAY_FROM_JOB
+        )
+    except AttributeError as error:
+        raise SetupOwnerError(
+            "Windows setup keeper requires breakaway process creation support."
+        ) from error
 
 
 def _read_view(directory: Path, request: SetupRequest) -> SetupView:

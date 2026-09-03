@@ -390,6 +390,55 @@ def test_spawn_failure_is_an_immutable_terminal(tmp_path: Path, monkeypatch) -> 
     assert first.terminal.cleanup == "cleanup_unverified"
 
 
+def test_spawn_keeper_requests_breakaway_from_outer_job(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Process:
+        pid = 123
+
+    def fake_popen(*_args, **kwargs):
+        calls.append(kwargs)
+        return Process()
+
+    monkeypatch.setattr(setup_owner.os, "name", "nt")
+    monkeypatch.setattr(
+        setup_owner.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False
+    )
+    monkeypatch.setattr(
+        setup_owner.subprocess, "DETACHED_PROCESS", 0x400, raising=False
+    )
+    monkeypatch.setattr(
+        setup_owner.subprocess,
+        "CREATE_BREAKAWAY_FROM_JOB",
+        0x800,
+        raising=False,
+    )
+    monkeypatch.setattr(setup_owner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        setup_owner,
+        "wait_for_process_start_time",
+        lambda _pid: "windows:123",
+    )
+
+    setup_owner._spawn_keeper(tmp_path)
+
+    assert calls[0]["creationflags"] == 0x200 | 0x400 | 0x800
+
+
+def test_spawn_keeper_fails_closed_without_breakaway_support(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(setup_owner.os, "name", "nt")
+    monkeypatch.delattr(
+        setup_owner.subprocess, "CREATE_BREAKAWAY_FROM_JOB", raising=False
+    )
+
+    with pytest.raises(setup_owner.SetupOwnerError, match="breakaway"):
+        setup_owner._spawn_keeper(tmp_path)
+
+
 def test_status_requires_well_formed_complete_fences(tmp_path: Path) -> None:
     now = datetime(2026, 9, 3, 12, tzinfo=UTC)
     request = setup_owner.accept_launch_request(
