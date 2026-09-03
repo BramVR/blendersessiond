@@ -101,6 +101,7 @@ def test_byte_identical_replay_remains_valid_after_deadline(tmp_path: Path) -> N
             ),
             "artifact_id",
         ),
+        (lambda value: value | {"deadline_utc": float("nan")}, "UTF-8 JSON"),
     ],
 )
 def test_request_is_strictly_bounded(tmp_path: Path, mutate, message: str) -> None:
@@ -112,6 +113,21 @@ def test_request_is_strictly_bounded(tmp_path: Path, mutate, message: str) -> No
             state_root=tmp_path,
             now=now,
         )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"schema_version":1,"schema_version":1}'.encode(),
+        raw_launch(datetime(2026, 9, 3, 12, tzinfo=UTC)).decode().encode("utf-16"),
+        b"\xef\xbb\xbf{}",
+    ],
+)
+def test_request_rejects_duplicate_or_non_utf8_json(
+    tmp_path: Path, raw: bytes
+) -> None:
+    with pytest.raises(setup_owner.SetupOwnerError, match="UTF-8 JSON"):
+        setup_owner.accept_launch_request(raw, state_root=tmp_path)
 
 
 def test_stop_before_dispatch_requires_full_fence_and_is_immutable(
@@ -344,6 +360,52 @@ def test_launch_timeout_rechecks_a_concurrent_receipt(
     )
     assert result.receipt is not None
     assert result.terminal is None
+
+
+def test_spawn_failure_is_an_immutable_terminal(tmp_path: Path, monkeypatch) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    stage_script(tmp_path)
+    monkeypatch.setattr(
+        setup_owner,
+        "_spawn_keeper",
+        lambda _directory: (_ for _ in ()).throw(OSError("spawn failed")),
+    )
+    first = setup_owner.launch_setup(
+        raw_launch(now),
+        state_root=tmp_path,
+        now=now,
+        platform_name="Windows",
+    )
+    second = setup_owner.launch_setup(
+        raw_launch(now),
+        state_root=tmp_path,
+        now=now,
+        platform_name="Windows",
+    )
+    assert first == second
+    assert first.terminal.outcome == "launch_failed"
+    assert first.terminal.cleanup == "cleanup_unverified"
+
+
+def test_status_requires_well_formed_complete_fences(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    setup_owner.accept_launch_request(raw_launch(now), state_root=tmp_path, now=now)
+    with pytest.raises(setup_owner.SetupOwnerError, match="SHA-256"):
+        setup_owner.status_setup(
+            ATTEMPT_ID,
+            expected_request_sha256="short",
+            expected_launch_id=LAUNCH_ID,
+            state_root=tmp_path,
+            platform_name="Windows",
+        )
+    with pytest.raises(setup_owner.SetupOwnerError, match="Launch ID"):
+        setup_owner.status_setup(
+            ATTEMPT_ID,
+            expected_request_sha256="0" * 64,
+            expected_launch_id="short",
+            state_root=tmp_path,
+            platform_name="Windows",
+        )
 
 
 def test_only_three_json_records_define_attempt_state(tmp_path: Path) -> None:
