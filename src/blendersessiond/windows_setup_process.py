@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from blendersessiond.locking import file_lock
 from blendersessiond.processes import process_start_time
 
 CREATE_SUSPENDED = 0x00000004
@@ -30,8 +29,8 @@ _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
 _WAIT_OBJECT_0 = 0
 _WAIT_TIMEOUT = 258
 _ERROR_BROKEN_PIPE = 109
-_ERROR_ALREADY_EXISTS = 183
 _ERROR_FILE_NOT_FOUND = 2
+_ERROR_INVALID_PARAMETER = 87
 _STILL_ACTIVE = 259
 _MAX_STREAM_BYTES = 24 * 1024
 
@@ -139,14 +138,10 @@ class _NativeWin32:
     def __init__(self) -> None:
         self.kernel = _kernel32()
 
-    def create_job(self, name: str | None) -> int:
-        job = self.kernel.CreateJobObjectW(None, name)
-        error = ctypes.get_last_error()
+    def create_job(self) -> int:
+        job = self.kernel.CreateJobObjectW(None, None)
         if not job:
-            raise ctypes.WinError(error)
-        if name is not None and error == _ERROR_ALREADY_EXISTS:
-            self.close_handles((job,))
-            raise RuntimeError("Setup Job Object name is already in use.")
+            raise ctypes.WinError(ctypes.get_last_error())
         return job
 
     def set_kill_on_close(self, job: int) -> None:
@@ -358,7 +353,6 @@ class WindowsSetupProcess:
         *,
         api: Any | None = None,
         powershell_path: Path | None = None,
-        job_name: str | None,
         script_size: int = 1,
         script_sha256: str = "0" * 64,
         cwd: Path | None = None,
@@ -367,7 +361,7 @@ class WindowsSetupProcess:
         powershell = (
             _system_powershell() if powershell_path is None else str(powershell_path)
         )
-        job = owner.create_job(job_name)
+        job = owner.create_job()
         try:
             owner.set_kill_on_close(job)
             child, parent = owner.create_standard_pipes()
@@ -543,17 +537,16 @@ $block = [ScriptBlock]::Create($text)
 
 def runtime_self_test() -> None:
     owned = WindowsSetupProcess.create_suspended(
-        job_name=None,
         script_size=1,
         script_sha256="0" * 64,
     )
     try:
         if owned.active_count() != 1:
             raise RuntimeError("Setup owner self-test found unexpected Job members.")
-        owned.terminate()
-        owned.wait_empty()
-        if not owned.empty():
-            raise RuntimeError("Setup owner self-test did not empty the Job Object.")
+        owned._api.close_handles((owned.job_handle,))
+        owned.job_handle = 0
+        if owned._api.wait_process(owned.process_handle, 5000) != _WAIT_OBJECT_0:
+            raise RuntimeError("Setup owner self-test did not enforce kill-on-close.")
     finally:
         owned.close()
 
@@ -562,7 +555,10 @@ def terminate_exact_process(pid: int, expected_creation_time: str) -> None:
     api = _NativeWin32()
     process = api.kernel.OpenProcess(0x00100000 | 0x1000 | 0x0001, False, pid)
     if not process:
-        return
+        error = ctypes.get_last_error()
+        if error == _ERROR_INVALID_PARAMETER:
+            return
+        raise ctypes.WinError(error)
     try:
         actual = f"windows:{api.process_creation_filetime(process)}"
         if actual != expected_creation_time:
@@ -572,6 +568,35 @@ def terminate_exact_process(pid: int, expected_creation_time: str) -> None:
         api.kernel.WaitForSingleObject(process, 5000)
     finally:
         api.close_handles((process,))
+
+
+def exact_process_state(
+    pid: int,
+    expected_creation_time: str,
+    *,
+    api: Any | None = None,
+) -> str:
+    owner = _NativeWin32() if api is None else api
+    process = owner.kernel.OpenProcess(0x00100000 | 0x1000, False, pid)
+    if not process:
+        return (
+            "absent"
+            if ctypes.get_last_error() == _ERROR_INVALID_PARAMETER
+            else "unknown"
+        )
+    try:
+        try:
+            actual = f"windows:{owner.process_creation_filetime(process)}"
+        except OSError:
+            return "unknown"
+        if actual != expected_creation_time:
+            return "different"
+        wait = owner.wait_process(process, 0)
+        if wait == _WAIT_OBJECT_0:
+            return "absent"
+        return "matches" if wait == _WAIT_TIMEOUT else "unknown"
+    finally:
+        owner.close_handles((process,))
 
 
 def job_exists(name: str) -> bool:
@@ -587,6 +612,16 @@ def job_exists(name: str) -> bool:
 
 
 def run_keeper(attempt_dir: Path) -> int:
+    from blendersessiond import setup_owner
+
+    try:
+        with setup_owner._guard_setup_path(attempt_dir):
+            return _run_keeper(attempt_dir)
+    except BaseException:
+        return 2
+
+
+def _run_keeper(attempt_dir: Path) -> int:
     from blendersessiond import setup_owner
 
     try:
@@ -613,7 +648,7 @@ def run_keeper(attempt_dir: Path) -> int:
     threads: list[threading.Thread] = []
     resumed = False
     try:
-        with file_lock(attempt_dir / ".lock"):
+        with setup_owner._setup_lock(attempt_dir):
             if (attempt_dir / "terminal.json").exists():
                 return 0
             if (attempt_dir / ".stop").exists():
@@ -631,7 +666,6 @@ def run_keeper(attempt_dir: Path) -> int:
                 )
                 return 0
         owned = WindowsSetupProcess.create_suspended(
-            job_name=setup_owner._job_name(request.launch_id),
             script_size=request.script.size,
             script_sha256=request.script.sha256,
             cwd=attempt_dir,
@@ -647,10 +681,10 @@ def run_keeper(attempt_dir: Path) -> int:
             keeper_creation_time=keeper_time,
             root_pid=owned.root_pid,
             root_creation_time=f"windows:{owned.root_creation_filetime}",
-            job_name=setup_owner._job_name(request.launch_id),
+            job_scope=setup_owner.JOB_SCOPE,
             owned_at=datetime.now(UTC),
         )
-        with file_lock(attempt_dir / ".lock"):
+        with setup_owner._setup_lock(attempt_dir):
             if (attempt_dir / "terminal.json").exists():
                 owned.terminate()
                 owned.wait_empty()
@@ -702,6 +736,8 @@ def run_keeper(attempt_dir: Path) -> int:
         owned.finish_io(threads)
         stdout, stdout_truncated = output.get("stdout", (b"", False))
         stderr, stderr_truncated = output.get("stderr", (b"", False))
+        stdout = _valid_utf8_prefix(stdout, truncated=stdout_truncated)
+        stderr = _valid_utf8_prefix(stderr, truncated=stderr_truncated)
         stdout.decode("utf-8", errors="strict")
         stderr.decode("utf-8", errors="strict")
         exit_value = None if exit_code == _STILL_ACTIVE else exit_code
@@ -775,7 +811,12 @@ def _wait_for_process(
             min(100, max(1, int(wait_seconds * 1000))),
         )
         if result == _WAIT_OBJECT_0:
-            return _wait_for_owned_job(owned, deadline_utc, stop_path)
+            return _wait_for_owned_job(
+                owned,
+                deadline_utc,
+                stop_path,
+                monotonic_deadline=deadline,
+            )
         if result != _WAIT_TIMEOUT:
             raise ctypes.WinError(ctypes.get_last_error())
 
@@ -784,18 +825,38 @@ def _wait_for_owned_job(
     owned: WindowsSetupProcess,
     deadline_utc: datetime,
     stop_path: Path,
+    *,
+    monotonic_deadline: float | None = None,
 ) -> str:
+    if monotonic_deadline is None:
+        remaining = max(0.0, (deadline_utc - datetime.now(UTC)).total_seconds())
+        monotonic_deadline = time.monotonic() + min(remaining, 5 * 60)
     while True:
         if stop_path.exists():
             owned.terminate()
             return "cancelled"
-        if datetime.now(UTC) >= deadline_utc:
+        if (
+            datetime.now(UTC) >= deadline_utc
+            or time.monotonic() >= monotonic_deadline
+        ):
             if not owned.empty():
                 owned.terminate()
             return "timed_out"
         if owned.empty():
             return "exited"
         time.sleep(0.02)
+
+
+def _valid_utf8_prefix(content: bytes, *, truncated: bool) -> bytes:
+    try:
+        content.decode("utf-8", errors="strict")
+        return content
+    except UnicodeDecodeError as error:
+        if not truncated:
+            raise
+        prefix = content[: error.start]
+        prefix.decode("utf-8", errors="strict")
+        return prefix
 
 
 def _powershell_arguments(script_size: int, script_sha256: str) -> list[str]:

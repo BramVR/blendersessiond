@@ -10,7 +10,8 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,6 +34,7 @@ _OWNER_LOSS_WAIT_SECONDS = 2.0
 _ATTEMPT_ID = re.compile(r"^bbsa_[A-Za-z0-9_-]{43}$")
 _LAUNCH_ID = re.compile(r"^bbsl_[A-Za-z0-9_-]{43}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+JOB_SCOPE = "unnamed-kill-on-close"
 _TERMINAL_OUTCOMES = {
     "cancelled",
     "cleanup_unverified",
@@ -109,11 +111,12 @@ class LaunchReceipt:
     keeper_creation_time: str
     root_pid: int
     root_creation_time: str
-    job_name: str
+    job_scope: str | None
     owned_at: datetime
+    job_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": SCHEMA_VERSION,
             "attempt_id": self.attempt_id,
             "launch_id": self.launch_id,
@@ -122,9 +125,13 @@ class LaunchReceipt:
             "keeper_creation_time": self.keeper_creation_time,
             "root_pid": self.root_pid,
             "root_creation_time": self.root_creation_time,
-            "job_name": self.job_name,
             "owned_at": _format_time(self.owned_at),
         }
+        if self.job_name is not None:
+            payload["job_name"] = self.job_name
+        else:
+            payload["job_scope"] = self.job_scope
+        return payload
 
 
 @dataclass(frozen=True)
@@ -213,6 +220,7 @@ class SetupView:
     request: SetupRequest
     receipt: LaunchReceipt | None = None
     terminal: SetupTerminal | None = None
+    ownership_unverified: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         if self.terminal is not None:
@@ -222,7 +230,13 @@ class SetupView:
             "attempt_id": self.request.attempt_id,
             "launch_id": self.request.launch_id,
             "request_sha256": self.request.request_sha256,
-            "status": "owned" if self.receipt is not None else "accepted",
+            "status": (
+                "ownership_unverified"
+                if self.ownership_unverified
+                else "owned"
+                if self.receipt is not None
+                else "accepted"
+            ),
         }
         if self.receipt is not None:
             payload["receipt"] = self.receipt.to_dict()
@@ -238,8 +252,9 @@ def accept_launch_request(
     current = datetime.now(UTC) if now is None else now
     request = _parse_request(raw_request)
     directory = _attempt_directory(state_root, request.attempt_id)
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with file_lock(directory / ".lock"):
+    with _guard_setup_path(directory, allow_missing=True):
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with _setup_lock(directory):
         existing = _read_optional_record(directory / "request.json")
         if existing is None:
             if (
@@ -270,23 +285,44 @@ def launch_setup(
     request = accept_launch_request(raw_request, state_root=root, now=now)
     directory = _attempt_directory(root, request.attempt_id)
     should_dispatch = False
-    with file_lock(directory / ".lock"):
+    with _setup_lock(directory):
         view = _read_view(directory, request)
         if view.terminal is not None or view.receipt is not None:
             return view
         should_dispatch = _touch_create_once(directory / ".dispatch")
     if should_dispatch:
-        if dispatch_keeper is not None:
-            dispatch_keeper(directory)
-            return SetupView(request=request)
-        _spawn_keeper(directory)
+        try:
+            if dispatch_keeper is not None:
+                dispatch_keeper(directory)
+                return SetupView(request=request)
+            _spawn_keeper(directory)
+        except (OSError, RuntimeError, ValueError) as error:
+            with _setup_lock(directory):
+                view = _read_view(directory, request)
+                if view.receipt is not None or view.terminal is not None:
+                    return view
+                _touch_create_once(directory / ".stop")
+                terminal = SetupTerminal.owned(
+                    request=request,
+                    outcome="launch_failed",
+                    process="not_started",
+                    cleanup="cleanup_unverified",
+                    stdout=b"",
+                    stderr=b"",
+                    finished_at=datetime.now(UTC),
+                    message=f"{type(error).__name__}: {error}"[:4096],
+                )
+                _write_create_once(
+                    directory / "terminal.json", terminal.to_dict()
+                )
+                return SetupView(request=request, terminal=terminal)
     deadline = time.monotonic() + _LAUNCH_WAIT_SECONDS
     while time.monotonic() < deadline:
         view = _read_view(directory, request)
         if view.receipt is not None or view.terminal is not None:
             return view
         time.sleep(0.02)
-    with file_lock(directory / ".lock"):
+    with _setup_lock(directory):
         view = _read_view(directory, request)
         if view.receipt is not None or view.terminal is not None:
             return view
@@ -308,8 +344,8 @@ def launch_setup(
 def status_setup(
     attempt_id: str,
     *,
-    expected_request_sha256: str | None = None,
-    expected_launch_id: str | None = None,
+    expected_request_sha256: str,
+    expected_launch_id: str,
     state_root: Path | None = None,
     platform_name: str | None = None,
 ) -> SetupView:
@@ -323,11 +359,11 @@ def status_setup(
         return view
     if view.receipt is None:
         if (
-            not (directory / ".dispatch").exists()
+            not _marker_exists(directory / ".dispatch")
             or request.deadline_utc > datetime.now(UTC)
         ):
             return view
-        with file_lock(directory / ".lock"):
+        with _setup_lock(directory):
             view = _read_view(directory, request)
             if view.terminal is not None or view.receipt is not None:
                 return view
@@ -345,8 +381,13 @@ def status_setup(
             _write_create_once(directory / "terminal.json", terminal.to_dict())
             return SetupView(request=request, terminal=terminal)
     receipt = view.receipt
-    if process_matches(receipt.keeper_pid, receipt.keeper_creation_time):
+    keeper_state = _process_state(
+        receipt.keeper_pid, receipt.keeper_creation_time
+    )
+    if keeper_state == "matches":
         return view
+    if keeper_state == "unknown":
+        return _unverified_view(request, receipt)
     return _reconcile_owner_loss(directory, request, receipt)
 
 
@@ -364,11 +405,11 @@ def stop_setup(
     directory = _attempt_directory(root, attempt_id)
     request = _load_request(directory)
     _check_fence(request, expected_request_sha256, expected_launch_id)
-    with file_lock(directory / ".lock"):
+    with _setup_lock(directory):
         view = _read_view(directory, request)
         if view.terminal is not None:
             return view
-        if view.receipt is None and not (directory / ".dispatch").exists():
+        if view.receipt is None and not _marker_exists(directory / ".dispatch"):
             terminal = SetupTerminal.owned(
                 request=request,
                 outcome="stopped_before_ownership",
@@ -413,28 +454,21 @@ def stop_setup(
         current = _read_view(directory, request)
         if current.terminal is not None:
             return current
-        if not process_matches(receipt.keeper_pid, receipt.keeper_creation_time):
+        if _process_state(
+            receipt.keeper_pid, receipt.keeper_creation_time
+        ) != "matches":
             break
         time.sleep(0.05)
-    if process_matches(receipt.keeper_pid, receipt.keeper_creation_time):
+    keeper_state = _process_state(
+        receipt.keeper_pid, receipt.keeper_creation_time
+    )
+    if keeper_state in {"matches", "unknown"}:
         from blendersessiond.windows_setup_process import terminate_exact_process
 
         try:
             terminate_exact_process(receipt.keeper_pid, receipt.keeper_creation_time)
         except (OSError, RuntimeError):
-            return _publish_terminal(
-                directory,
-                request,
-                SetupTerminal.owned(
-                    request=request,
-                    outcome="cleanup_unverified",
-                    process="cancelled",
-                    cleanup="cleanup_unverified",
-                    stdout=b"",
-                    stderr=b"",
-                    finished_at=datetime.now(UTC),
-                ),
-            )
+            return _unverified_view(request, receipt)
     return _reconcile_after_stop(directory, request, receipt)
 
 
@@ -445,22 +479,29 @@ def script_path_for_attempt(state_root: Path, attempt_id: str) -> Path:
 def read_staged_script(state_root: Path, request: SetupRequest) -> bytes:
     path = script_path_for_attempt(state_root, request.attempt_id)
     try:
-        path_metadata = path.lstat()
-        if stat.S_ISLNK(path_metadata.st_mode) or not stat.S_ISREG(
-            path_metadata.st_mode
-        ):
-            raise SetupOwnerError("The staged setup script must be a regular file.")
-        with path.open("rb") as stream:
-            opened_metadata = os.fstat(stream.fileno())
-            if (
-                not stat.S_ISREG(opened_metadata.st_mode)
-                or (path_metadata.st_dev, path_metadata.st_ino)
-                != (opened_metadata.st_dev, opened_metadata.st_ino)
+        with _guard_setup_path(path):
+            path_metadata = path.lstat()
+            if stat.S_ISLNK(path_metadata.st_mode) or not stat.S_ISREG(
+                path_metadata.st_mode
             ):
                 raise SetupOwnerError(
-                    "The staged setup script changed while it was opened."
+                    "The staged setup script must be a regular file."
                 )
-            content = stream.read(request.script.size + 1)
+            with path.open("rb") as stream:
+                opened_metadata = os.fstat(stream.fileno())
+                if (
+                    not stat.S_ISREG(opened_metadata.st_mode)
+                    or (path_metadata.st_dev, path_metadata.st_ino)
+                    != (opened_metadata.st_dev, opened_metadata.st_ino)
+                ):
+                    raise SetupOwnerError(
+                        "The staged setup script changed while it was opened."
+                    )
+                content = stream.read(request.script.size + 1)
+    except SetupOwnerError as error:
+        if not isinstance(error.__cause__, FileNotFoundError):
+            raise
+        raise SetupOwnerError("The staged setup script is missing.") from error
     except FileNotFoundError as error:
         raise SetupOwnerError("The staged setup script is missing.") from error
     if (
@@ -481,8 +522,8 @@ def _parse_request(raw: bytes) -> SetupRequest:
     if not isinstance(raw, bytes) or not raw or len(raw) > MAX_REQUEST_BYTES:
         raise SetupOwnerError("Setup launch request must be 1-16 KiB.")
     try:
-        payload = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        payload = _strict_json(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise SetupOwnerError(
             "Setup launch request is not valid UTF-8 JSON."
         ) from error
@@ -554,20 +595,21 @@ def _spawn_keeper(directory: Path) -> None:
     flags = 0
     if os.name == "nt":
         flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "blendersessiond.windows_setup_process",
-            "--keeper",
-            str(directory),
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        creationflags=flags,
-    )
+    with _guard_setup_path(directory):
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "blendersessiond.windows_setup_process",
+                "--keeper",
+                str(directory),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=flags,
+        )
     if wait_for_process_start_time(process.pid) is None:
         raise SetupOwnerError(
             "The setup keeper exited before ownership acknowledgement."
@@ -599,12 +641,14 @@ def _load_request(directory: Path) -> SetupRequest:
 
 def _check_fence(
     request: SetupRequest,
-    request_sha256: str | None,
-    launch_id: str | None,
+    request_sha256: str,
+    launch_id: str,
 ) -> None:
-    if request_sha256 is not None and request_sha256 != request.request_sha256:
+    request_sha256 = _validate_sha256(request_sha256)
+    launch_id = _validate_launch_id(launch_id)
+    if request_sha256 != request.request_sha256:
         raise SetupOwnerError("The expected request SHA-256 does not match.")
-    if launch_id is not None and launch_id != request.launch_id:
+    if launch_id != request.launch_id:
         raise SetupOwnerError("The expected Launch ID does not match.")
 
 
@@ -618,9 +662,9 @@ def _reconcile_after_stop(
         current = _read_view(directory, request)
         if current.terminal is not None:
             return current
-        keeper = process_matches(receipt.keeper_pid, receipt.keeper_creation_time)
-        root = process_matches(receipt.root_pid, receipt.root_creation_time)
-        if not keeper and not root and _job_is_absent(receipt.job_name):
+        keeper = _process_state(receipt.keeper_pid, receipt.keeper_creation_time)
+        root = _process_state(receipt.root_pid, receipt.root_creation_time)
+        if _cleanup_is_proven(receipt, keeper, root):
             return _publish_terminal(
                 directory,
                 request,
@@ -635,14 +679,23 @@ def _reconcile_after_stop(
                 ),
             )
         time.sleep(0.05)
+    keeper = _process_state(receipt.keeper_pid, receipt.keeper_creation_time)
+    root = _process_state(receipt.root_pid, receipt.root_creation_time)
+    if keeper in {"matches", "unknown"} or root == "unknown":
+        return _unverified_view(request, receipt)
+    cleanup = (
+        "tree_gone"
+        if _cleanup_is_proven(receipt, keeper, root)
+        else "cleanup_unverified"
+    )
     return _publish_terminal(
         directory,
         request,
         SetupTerminal.owned(
             request=request,
-            outcome="cleanup_unverified",
+            outcome="stopped" if cleanup == "tree_gone" else cleanup,
             process="cancelled",
-            cleanup="cleanup_unverified",
+            cleanup=cleanup,
             stdout=b"",
             stderr=b"",
             finished_at=datetime.now(UTC),
@@ -657,15 +710,25 @@ def _reconcile_owner_loss(
 ) -> SetupView:
     deadline = time.monotonic() + _OWNER_LOSS_WAIT_SECONDS
     while time.monotonic() < deadline:
-        if process_matches(receipt.keeper_pid, receipt.keeper_creation_time):
+        keeper = _process_state(receipt.keeper_pid, receipt.keeper_creation_time)
+        if keeper == "matches":
             return SetupView(request=request, receipt=receipt)
-        if not process_matches(receipt.root_pid, receipt.root_creation_time):
+        if _process_is_gone(
+            _process_state(receipt.root_pid, receipt.root_creation_time)
+        ):
             break
         time.sleep(0.02)
-    root = process_matches(receipt.root_pid, receipt.root_creation_time)
+    keeper = _process_state(receipt.keeper_pid, receipt.keeper_creation_time)
+    if keeper == "matches":
+        return SetupView(request=request, receipt=receipt)
+    if keeper == "unknown":
+        return _unverified_view(request, receipt)
+    root = _process_state(receipt.root_pid, receipt.root_creation_time)
+    if root == "unknown":
+        return _unverified_view(request, receipt)
     cleanup = (
         "tree_gone"
-        if not root and _job_is_absent(receipt.job_name)
+        if _cleanup_is_proven(receipt, keeper, root)
         else "cleanup_unverified"
     )
     return _publish_terminal(
@@ -688,7 +751,7 @@ def _publish_terminal(
     request: SetupRequest,
     terminal: SetupTerminal,
 ) -> SetupView:
-    with file_lock(directory / ".lock"):
+    with _setup_lock(directory):
         existing = _read_optional_record(directory / "terminal.json")
         if existing is not None:
             return SetupView(
@@ -700,24 +763,26 @@ def _publish_terminal(
 
 
 def _write_create_once(path: Path, payload: dict[str, Any]) -> None:
-    encoded = _encode_record(payload)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.tmp"
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, "wb", closefd=False) as stream:
-            stream.write(encoded)
-            stream.flush()
-            os.fsync(stream.fileno())
-    finally:
-        os.close(descriptor)
-    try:
-        _publish_no_replace(temporary, path)
-    finally:
+    with _guard_setup_path(path.parent):
+        encoded = _encode_record(payload)
+        temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.tmp"
+        descriptor = os.open(
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+        )
         try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+            with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+        finally:
+            os.close(descriptor)
+        try:
+            _publish_no_replace(temporary, path)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _publish_no_replace(source: Path, destination: Path) -> None:
@@ -737,25 +802,27 @@ def _publish_no_replace(source: Path, destination: Path) -> None:
 
 
 def _touch_create_once(path: Path) -> bool:
-    try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return False
-    os.close(descriptor)
-    return True
+    with _guard_setup_path(path.parent):
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return False
+        os.close(descriptor)
+        return True
 
 
 def _read_optional_record(path: Path) -> dict[str, Any] | None:
-    try:
-        with path.open("rb") as stream:
-            encoded = stream.read(MAX_RECORD_BYTES + 1)
-    except FileNotFoundError:
-        return None
+    with _guard_setup_path(path, allow_missing=True):
+        try:
+            with path.open("rb") as stream:
+                encoded = stream.read(MAX_RECORD_BYTES + 1)
+        except FileNotFoundError:
+            return None
     if len(encoded) > MAX_RECORD_BYTES:
         raise SetupOwnerError(f"Setup record is too large: {path.name}.")
     try:
-        payload = json.loads(encoded)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        payload = _strict_json(encoded)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise SetupOwnerError(f"Setup record is invalid: {path.name}.") from error
     if (
         not isinstance(payload, dict)
@@ -826,8 +893,9 @@ def _receipt_from_record(
             keeper_creation_time=payload["keeper_creation_time"],
             root_pid=payload["root_pid"],
             root_creation_time=payload["root_creation_time"],
-            job_name=payload["job_name"],
+            job_scope=payload.get("job_scope"),
             owned_at=_parse_time(payload["owned_at"], "owned_at"),
+            job_name=payload.get("job_name"),
         )
     except (KeyError, TypeError) as error:
         raise SetupOwnerError("Setup launch receipt is invalid.") from error
@@ -844,7 +912,13 @@ def _receipt_from_record(
         and not isinstance(receipt.root_pid, bool)
         and receipt.root_pid > 0
         and isinstance(receipt.root_creation_time, str)
-        and receipt.job_name == _job_name(request.launch_id)
+        and (
+            (receipt.job_scope == JOB_SCOPE and receipt.job_name is None)
+            or (
+                receipt.job_scope is None
+                and receipt.job_name == _legacy_job_name(request.launch_id)
+            )
+        )
     )
     if not valid:
         raise SetupOwnerError("Setup launch receipt is invalid or stale.")
@@ -991,25 +1065,120 @@ def _format_time(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _strict_json(encoded: bytes) -> Any:
+    text = encoded.decode("utf-8", errors="strict")
+    if text.startswith("\ufeff"):
+        raise ValueError("UTF-8 BOM is not allowed.")
+
+    def object_from_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"Duplicate JSON key: {key}.")
+            value[key] = item
+        return value
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"Non-finite JSON value: {value}.")
+
+    return json.loads(
+        text,
+        object_pairs_hook=object_from_pairs,
+        parse_constant=reject_constant,
+    )
+
+
+def _process_state(pid: int, creation_time: str) -> str:
+    if os.name == "nt":
+        from blendersessiond.windows_setup_process import exact_process_state
+
+        return exact_process_state(pid, creation_time)
+    return "matches" if process_matches(pid, creation_time) else "absent"
+
+
+def _process_is_gone(state: str) -> bool:
+    return state in {"absent", "different"}
+
+
+def _unverified_view(
+    request: SetupRequest, receipt: LaunchReceipt
+) -> SetupView:
+    return SetupView(
+        request=request,
+        receipt=receipt,
+        ownership_unverified=True,
+    )
+
+
+def _cleanup_is_proven(
+    receipt: LaunchReceipt, keeper_state: str, root_state: str
+) -> bool:
+    if not (
+        _process_is_gone(keeper_state) and _process_is_gone(root_state)
+    ):
+        return False
+    if receipt.job_name is None:
+        return False
+    return _legacy_job_is_absent(receipt.job_name)
+
+
+def _legacy_job_name(launch_id: str) -> str:
+    return f"Local\\BlenderSessiond.Setup.{launch_id}"
+
+
+def _legacy_job_is_absent(name: str) -> bool:
+    from blendersessiond.windows_setup_process import job_exists
+
+    try:
+        return not job_exists(name)
+    except (OSError, RuntimeError):
+        return False
+
+
+@contextmanager
+def _guard_setup_path(
+    path: Path, *, allow_missing: bool = False
+) -> Iterator[None]:
+    if os.name != "nt":
+        yield
+        return
+    from blendersessiond.windows_path_authority import (
+        PathAuthorityError,
+        guard_path,
+    )
+
+    parts = path.parts
+    setup_indexes = [
+        index for index, part in enumerate(parts) if part == "setup-attempts"
+    ]
+    authority_root = (
+        path.__class__(*parts[: setup_indexes[-1]]) if setup_indexes else path
+    )
+    try:
+        with guard_path(
+            path,
+            authority_root=authority_root,
+            allow_missing=allow_missing,
+        ):
+            yield
+    except (OSError, PathAuthorityError) as error:
+        raise SetupOwnerError(str(error)) from error
+
+
+@contextmanager
+def _setup_lock(directory: Path) -> Iterator[None]:
+    with _guard_setup_path(directory):
+        with file_lock(directory / ".lock"):
+            yield
+
+
+def _marker_exists(path: Path) -> bool:
+    with _guard_setup_path(path, allow_missing=True):
+        return path.exists()
+
+
 def _require_windows(value: str | None) -> None:
     if (platform.system() if value is None else value) != "Windows":
         raise SetupOwnerError(
             "Windows setup ownership is unavailable on this platform."
         )
-
-
-def _job_name(launch_id: str) -> str:
-    return f"Local\\BlenderSessiond.Setup.{launch_id}"
-
-
-def _job_exists(name: str) -> bool:
-    from blendersessiond.windows_setup_process import job_exists
-
-    return job_exists(name)
-
-
-def _job_is_absent(name: str) -> bool:
-    try:
-        return not _job_exists(name)
-    except (OSError, RuntimeError):
-        return False

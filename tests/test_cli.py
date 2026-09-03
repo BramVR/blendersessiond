@@ -75,6 +75,7 @@ def test_setup_owner_stop_routes_complete_fence(monkeypatch, capsys) -> None:
         captured["attempt_id"] = attempt_id
         captured.update(kwargs)
         return SimpleNamespace(
+            terminal=SimpleNamespace(cleanup="tree_gone"),
             to_dict=lambda: {"schema_version": 1, "status": "terminal"}
         )
 
@@ -104,6 +105,78 @@ def test_setup_owner_stop_routes_complete_fence(monkeypatch, capsys) -> None:
         "expected_launch_id": launch_id,
     }
     assert json.loads(capsys.readouterr().out)["status"] == "terminal"
+
+
+@pytest.mark.parametrize(
+    ("command", "terminal", "expected"),
+    [
+        ("launch", SimpleNamespace(succeeded=False, cleanup="tree_gone"), 1),
+        ("status", SimpleNamespace(succeeded=False, cleanup="tree_gone"), 1),
+        ("stop", SimpleNamespace(succeeded=False, cleanup="tree_gone"), 0),
+        ("stop", SimpleNamespace(succeeded=False, cleanup="cleanup_unverified"), 1),
+    ],
+)
+def test_setup_owner_terminal_controls_exit_status(
+    command: str,
+    terminal: SimpleNamespace,
+    expected: int,
+    monkeypatch,
+    capsys,
+) -> None:
+    result = SimpleNamespace(
+        terminal=terminal,
+        to_dict=lambda: {"schema_version": 1, "status": "terminal"},
+    )
+    attempt_id = "bbsa_" + "A" * 43
+    launch_id = "bbsl_" + "B" * 43
+    if command == "launch":
+        monkeypatch.setattr(cli, "launch_setup", lambda _raw: result)
+        monkeypatch.setattr(
+            cli.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"{}"))
+        )
+        arguments = ["setup-owner", "launch", "--json"]
+    else:
+        monkeypatch.setattr(cli, f"{command}_setup", lambda *_args, **_kwargs: result)
+        arguments = [
+            "setup-owner",
+            command,
+            "--attempt-id",
+            attempt_id,
+            "--expect-request-sha256",
+            "c" * 64,
+            "--expect-launch-id",
+            launch_id,
+            "--json",
+        ]
+
+    assert cli.main(arguments) == expected
+    assert json.loads(capsys.readouterr().out)["status"] == "terminal"
+
+
+def test_setup_owner_unverified_view_returns_failure(monkeypatch, capsys) -> None:
+    result = SimpleNamespace(
+        terminal=None,
+        ownership_unverified=True,
+        to_dict=lambda: {"schema_version": 1, "status": "ownership_unverified"},
+    )
+    monkeypatch.setattr(cli, "status_setup", lambda *_args, **_kwargs: result)
+    assert (
+        cli.main(
+            [
+                "setup-owner",
+                "status",
+                "--attempt-id",
+                "bbsa_" + "A" * 43,
+                "--expect-request-sha256",
+                "c" * 64,
+                "--expect-launch-id",
+                "bbsl_" + "B" * 43,
+                "--json",
+            ]
+        )
+        == 1
+    )
+    assert json.loads(capsys.readouterr().out)["status"] == "ownership_unverified"
 
 
 def test_setup_owner_parser_rejects_generic_process_inputs() -> None:

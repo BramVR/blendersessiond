@@ -17,8 +17,8 @@ class FakeWin32:
     def __init__(self) -> None:
         self.calls: list[object] = []
 
-    def create_job(self, name: str | None):
-        self.calls.append(("create_job", name))
+    def create_job(self):
+        self.calls.append(("create_job", None))
         return "job"
 
     def set_kill_on_close(self, job) -> None:
@@ -198,6 +198,42 @@ def test_concrete_windows_job_list_runtime_self_test() -> None:
     windows_setup_process.runtime_self_test()
 
 
+def test_exact_process_state_keeps_access_failure_unknown(monkeypatch) -> None:
+    class Kernel:
+        def OpenProcess(self, *_args):
+            return 0
+
+    api = type("API", (), {"kernel": Kernel()})()
+    monkeypatch.setattr(
+        windows_setup_process.ctypes,
+        "get_last_error",
+        lambda: 5,
+        raising=False,
+    )
+    assert windows_setup_process.exact_process_state(10, "windows:1", api=api) == (
+        "unknown"
+    )
+
+
+def test_truncated_output_keeps_only_a_valid_utf8_prefix() -> None:
+    content = "snowman ☃".encode()[:-1]
+    assert windows_setup_process._valid_utf8_prefix(
+        content, truncated=True
+    ) == b"snowman "
+
+
+def test_truncated_output_drops_bytes_after_first_invalid_sequence() -> None:
+    content = b"valid\xffalso-valid"
+    assert windows_setup_process._valid_utf8_prefix(
+        content, truncated=True
+    ) == b"valid"
+
+
+def test_untruncated_invalid_output_fails_closed() -> None:
+    with pytest.raises(UnicodeDecodeError):
+        windows_setup_process._valid_utf8_prefix(b"valid\xff", truncated=False)
+
+
 def _attempt(tmp_path: Path, deadline: datetime) -> Path:
     attempt_id = "bbsa_" + "A" * 43
     launch_id = "bbsl_" + "B" * 43
@@ -333,7 +369,7 @@ def test_keeper_resumes_while_the_attempt_lock_is_held(
         raise OSError("stop after observation")
 
     owned.resume = resume
-    monkeypatch.setattr(windows_setup_process, "file_lock", tracked_lock)
+    monkeypatch.setattr(setup_owner, "_setup_lock", tracked_lock)
     monkeypatch.setattr(
         windows_setup_process.WindowsSetupProcess,
         "create_suspended",
