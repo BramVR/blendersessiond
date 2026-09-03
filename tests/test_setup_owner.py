@@ -2,388 +2,182 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from blendersessiond import setup_owner
 
-ATTEMPT_ID = "a" * 32
-SCRIPT = b'Write-Output \'{"status":"configured"}\'\n'
+ATTEMPT_ID = "bbsa_" + "A" * 43
+LAUNCH_ID = "bbsl_" + "B" * 43
+SCRIPT = b"Write-Output 'owned bytes'\n"
 SCRIPT_SHA256 = hashlib.sha256(SCRIPT).hexdigest()
 
 
-def stage_script(root: Path, content: bytes = SCRIPT) -> Path:
-    path = root / "setup-attempts" / ATTEMPT_ID / "setup.ps1"
+def raw_launch(now: datetime) -> bytes:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "attempt_id": ATTEMPT_ID,
+            "launch_id": LAUNCH_ID,
+            "deadline_utc": (now + timedelta(minutes=4)).isoformat().replace("+00:00", "Z"),
+            "operation_revision": "windows-setup-owner-v1",
+            "script": {
+                "artifact_id": f"{ATTEMPT_ID}.ps1",
+                "size": len(SCRIPT),
+                "sha256": SCRIPT_SHA256,
+            },
+        },
+        separators=(",", ":"),
+    ).encode()
+
+
+def stage_script(root: Path) -> Path:
+    path = setup_owner.script_path_for_attempt(root, ATTEMPT_ID)
     path.parent.mkdir(parents=True)
-    path.write_bytes(content)
+    path.write_bytes(SCRIPT)
     return path
 
 
-def test_launch_publishes_request_before_spawning_keeper(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stage_script(tmp_path)
-    observed: list[dict[str, object]] = []
+def test_request_records_exact_raw_hash_and_both_identities(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    raw = raw_launch(now)
+    request = setup_owner.accept_launch_request(raw, state_root=tmp_path, now=now)
 
-    def fake_spawn(attempt_dir: Path) -> tuple[int, str]:
-        observed.append(json.loads((attempt_dir / "request.json").read_text()))
-        setup_owner._write_create_once(
-            attempt_dir / "launch-receipt.json",
-            {
-                "schema_version": 1,
-                "attempt_id": ATTEMPT_ID,
-                "request_sha256": observed[0]["request_sha256"],
-                "launch_id": "launch_test",
-                "keeper_pid": 10,
-                "keeper_creation_time": "windows:keeper",
-                "root_pid": 11,
-                "root_creation_time": "windows:root",
-                "owned_at": "2026-09-03T00:00:00Z",
-            },
-        )
-        return 10, "windows:keeper"
-
-    monkeypatch.setattr(setup_owner, "_spawn_keeper", fake_spawn)
-
-    result = setup_owner.launch_setup(
-        state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        script_sha256=SCRIPT_SHA256,
-        deadline_unix_ms=2_000_000_000_000,
-        platform_name="Windows",
+    assert request.attempt_id == ATTEMPT_ID
+    assert request.launch_id == LAUNCH_ID
+    assert request.request_sha256 == hashlib.sha256(raw).hexdigest()
+    assert request.script.artifact_id == f"{ATTEMPT_ID}.ps1"
+    persisted = json.loads(
+        (tmp_path / "setup-attempts" / ATTEMPT_ID / "request.json").read_text()
     )
-
-    assert result["status"] == "owned"
-    assert observed[0]["script_size"] == len(SCRIPT)
-    assert observed[0]["script_sha256"] == SCRIPT_SHA256
+    assert persisted["request_sha256"] == hashlib.sha256(raw).hexdigest()
 
 
-def test_launch_is_byte_identical_replay(tmp_path: Path, monkeypatch) -> None:
-    stage_script(tmp_path)
-    calls = 0
-
-    def fake_spawn(attempt_dir: Path) -> tuple[int, str]:
-        nonlocal calls
-        calls += 1
-        request = json.loads((attempt_dir / "request.json").read_text())
-        setup_owner._write_create_once(
-            attempt_dir / "launch-receipt.json",
-            {
-                "schema_version": 1,
-                "attempt_id": ATTEMPT_ID,
-                "request_sha256": request["request_sha256"],
-                "launch_id": "launch_test",
-                "keeper_pid": 10,
-                "keeper_creation_time": "windows:keeper",
-                "root_pid": 11,
-                "root_creation_time": "windows:root",
-                "owned_at": "2026-09-03T00:00:00Z",
-            },
-        )
-        return 10, "windows:keeper"
-
-    monkeypatch.setattr(setup_owner, "_spawn_keeper", fake_spawn)
-    arguments = {
-        "state_root": tmp_path,
-        "attempt_id": ATTEMPT_ID,
-        "script_sha256": SCRIPT_SHA256,
-        "deadline_unix_ms": 2_000_000_000_000,
-        "platform_name": "Windows",
-    }
-
-    first = setup_owner.launch_setup(**arguments)
-    second = setup_owner.launch_setup(**arguments)
-
-    assert first == second
-    assert calls == 1
+def test_replay_requires_byte_identical_raw_json(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    raw = raw_launch(now)
+    first = setup_owner.accept_launch_request(raw, state_root=tmp_path, now=now)
+    assert first == setup_owner.accept_launch_request(raw, state_root=tmp_path, now=now)
+    with pytest.raises(setup_owner.AttemptConflictError, match="different request"):
+        setup_owner.accept_launch_request(raw + b"\n", state_root=tmp_path, now=now)
 
 
-def test_lost_launch_response_reconciles_the_published_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stage_script(tmp_path)
-    calls = 0
-
-    def ambiguous_spawn(attempt_dir: Path) -> tuple[int, str]:
-        nonlocal calls
-        calls += 1
-        request = json.loads((attempt_dir / "request.json").read_text())
-        setup_owner._write_create_once(
-            attempt_dir / "launch-receipt.json",
-            {
-                "schema_version": 1,
-                "attempt_id": ATTEMPT_ID,
-                "request_sha256": request["request_sha256"],
-                "launch_id": "launch_test",
-                "keeper_pid": 10,
-                "keeper_creation_time": "windows:keeper",
-                "root_pid": 11,
-                "root_creation_time": "windows:root",
-                "job_name": f"Local\\blendersessiond-setup-{ATTEMPT_ID}",
-                "owned_at": "2026-09-03T00:00:00Z",
-            },
-        )
-        raise OSError("launch response was lost")
-
-    monkeypatch.setattr(setup_owner, "_spawn_keeper", ambiguous_spawn)
-    arguments = {
-        "state_root": tmp_path,
-        "attempt_id": ATTEMPT_ID,
-        "script_sha256": SCRIPT_SHA256,
-        "deadline_unix_ms": 2_000_000_000_000,
-        "platform_name": "Windows",
-    }
-
-    with pytest.raises(OSError, match="response was lost"):
-        setup_owner.launch_setup(**arguments)
-    reconciled = setup_owner.launch_setup(**arguments)
-
-    assert reconciled["status"] == "owned"
-    assert reconciled["receipt"]["launch_id"] == "launch_test"
-    assert calls == 1
-
-
-def test_abandoned_pre_receipt_claim_becomes_an_immutable_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stage_script(tmp_path)
-    attempt_dir = tmp_path / "setup-attempts" / ATTEMPT_ID
-    request = setup_owner._request_payload(
-        ATTEMPT_ID, SCRIPT_SHA256, len(SCRIPT), 2_000_000_000_000
-    )
-    setup_owner._write_create_once(attempt_dir / "request.json", request)
-    setup_owner._write_create_once(
-        attempt_dir / "launch-claim.json",
-        {
-            "schema_version": 1,
-            "attempt_id": ATTEMPT_ID,
-            "request_sha256": request["request_sha256"],
-            "launch_id": "launch_abandoned",
-            "claimed_at": "2026-09-03T00:00:00Z",
-        },
-    )
-    monkeypatch.setattr(setup_owner, "_LAUNCH_WAIT_SECONDS", 0)
-    monkeypatch.setattr(
-        setup_owner,
-        "_spawn_keeper",
-        lambda _attempt_dir: (_ for _ in ()).throw(AssertionError("replacement")),
-    )
-
-    first = setup_owner.launch_setup(
-        state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        script_sha256=SCRIPT_SHA256,
-        deadline_unix_ms=2_000_000_000_000,
-        platform_name="Windows",
-    )
-    second = setup_owner.status_setup(
-        state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        platform_name="Windows",
-    )
-
-    assert first == second
-    assert first["status"] == "launch_failed"
-    assert first["cleanup"] == "cleanup_unverified"
-    assert json.loads((attempt_dir / "terminal.json").read_text()) == first
-
-
-def test_launch_rejects_request_replacement(tmp_path: Path, monkeypatch) -> None:
-    stage_script(tmp_path)
-    monkeypatch.setattr(
-        setup_owner,
-        "_spawn_keeper",
-        lambda _attempt_dir: (_ for _ in ()).throw(RuntimeError("not reached")),
-    )
-    attempt_dir = tmp_path / "setup-attempts" / ATTEMPT_ID
-    setup_owner._write_create_once(
-        attempt_dir / "request.json",
-        {
-            "schema_version": 1,
-            "attempt_id": ATTEMPT_ID,
-            "request_sha256": "b" * 64,
-            "script_sha256": "c" * 64,
-            "script_size": 1,
-            "deadline_unix_ms": 2_000_000_000_000,
-            "operation": "blender-box-windows-setup-v1",
-        },
-    )
-
-    with pytest.raises(setup_owner.SetupOwnerError, match="different request"):
-        setup_owner.launch_setup(
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda value: value | {"schema_version": 2}, "schema_version"),
+        (lambda value: value | {"attempt_id": "../escape"}, "Attempt ID"),
+        (lambda value: value | {"launch_id": "bbsl_short"}, "Launch ID"),
+        (lambda value: value | {"operation_revision": "generic-command-v1"}, "operation_revision"),
+        (lambda value: value | {"unknown": True}, "unknown"),
+        (lambda value: value | {"deadline_utc": "2026-09-03T12:05:00.001Z"}, "five minutes"),
+        (
+            lambda value: value | {"script": value["script"] | {"artifact_id": "chosen.ps1"}},
+            "artifact_id",
+        ),
+    ],
+)
+def test_request_is_strictly_bounded(tmp_path: Path, mutate, message: str) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    payload = mutate(json.loads(raw_launch(now)))
+    with pytest.raises(setup_owner.SetupOwnerError, match=message):
+        setup_owner.accept_launch_request(
+            json.dumps(payload, separators=(",", ":")).encode(),
             state_root=tmp_path,
-            attempt_id=ATTEMPT_ID,
-            script_sha256=SCRIPT_SHA256,
-            deadline_unix_ms=2_000_000_000_000,
+            now=now,
+        )
+
+
+def test_stop_before_dispatch_requires_full_fence_and_is_immutable(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    request = setup_owner.accept_launch_request(raw_launch(now), state_root=tmp_path, now=now)
+    with pytest.raises(setup_owner.SetupOwnerError, match="request SHA-256"):
+        setup_owner.stop_setup(
+            ATTEMPT_ID,
+            expected_request_sha256="0" * 64,
+            expected_launch_id=LAUNCH_ID,
+            state_root=tmp_path,
+            now=now,
             platform_name="Windows",
         )
-
-
-def test_stop_before_ownership_is_immutable_and_prevents_launch(
-    tmp_path: Path, monkeypatch
-) -> None:
-    stage_script(tmp_path)
-    attempt_dir = tmp_path / "setup-attempts" / ATTEMPT_ID
-    request = setup_owner._request_payload(
-        ATTEMPT_ID, SCRIPT_SHA256, len(SCRIPT), 2_000_000_000_000
-    )
-    setup_owner._write_create_once(attempt_dir / "request.json", request)
-    monkeypatch.setattr(
-        setup_owner,
-        "_spawn_keeper",
-        lambda _attempt_dir: (_ for _ in ()).throw(RuntimeError("not reached")),
-    )
-
     first = setup_owner.stop_setup(
+        ATTEMPT_ID,
+        expected_request_sha256=request.request_sha256,
+        expected_launch_id=LAUNCH_ID,
         state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
+        now=now,
         platform_name="Windows",
     )
     second = setup_owner.stop_setup(
+        ATTEMPT_ID,
+        expected_request_sha256=request.request_sha256,
+        expected_launch_id=LAUNCH_ID,
         state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
+        now=now + timedelta(seconds=1),
+        platform_name="Windows",
+    )
+    assert first == second
+    assert first.terminal.outcome == "stopped_before_ownership"
+    assert first.terminal.cleanup == "tree_gone"
+
+
+def test_inflight_pre_receipt_stop_never_claims_tree_gone(tmp_path: Path, monkeypatch) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    stage_script(tmp_path)
+    view = setup_owner.launch_setup(
+        raw_launch(now),
+        state_root=tmp_path,
+        now=now,
+        platform_name="Windows",
+        dispatch_keeper=lambda _directory: None,
+    )
+    monkeypatch.setattr(setup_owner, "_STOP_WAIT_SECONDS", 0)
+    stopped = setup_owner.stop_setup(
+        ATTEMPT_ID,
+        expected_request_sha256=view.request.request_sha256,
+        expected_launch_id=LAUNCH_ID,
+        state_root=tmp_path,
+        now=now,
+        platform_name="Windows",
+    )
+    assert stopped.terminal.outcome == "launch_failed"
+    assert stopped.terminal.cleanup == "cleanup_unverified"
+
+
+def test_existing_terminal_prevents_late_dispatch(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    request = setup_owner.accept_launch_request(raw_launch(now), state_root=tmp_path, now=now)
+    terminal = setup_owner.stop_setup(
+        ATTEMPT_ID,
+        expected_request_sha256=request.request_sha256,
+        expected_launch_id=LAUNCH_ID,
+        state_root=tmp_path,
+        now=now,
         platform_name="Windows",
     )
     replay = setup_owner.launch_setup(
+        raw_launch(now),
         state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        script_sha256=SCRIPT_SHA256,
-        deadline_unix_ms=2_000_000_000_000,
+        now=now,
         platform_name="Windows",
+        dispatch_keeper=lambda _directory: (_ for _ in ()).throw(AssertionError("dispatch")),
     )
-
-    assert first == second == replay
-    assert first["status"] == "stopped_before_ownership"
-    assert first["cleanup"] == "tree_gone"
+    assert replay == terminal
 
 
-def test_status_does_not_dispatch_owner(tmp_path: Path, monkeypatch) -> None:
+def test_only_three_json_records_define_attempt_state(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
     stage_script(tmp_path)
-    monkeypatch.setattr(
-        setup_owner,
-        "_spawn_keeper",
-        lambda _attempt_dir: (_ for _ in ()).throw(RuntimeError("not reached")),
+    setup_owner.launch_setup(
+        raw_launch(now), state_root=tmp_path, now=now, platform_name="Windows",
+        dispatch_keeper=lambda _directory: None,
     )
-
-    result = setup_owner.status_setup(
-        state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        platform_name="Windows",
-    )
-
-    assert result["status"] == "not_found"
-
-
-def test_owner_loss_publishes_one_stable_tree_gone_terminal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stage_script(tmp_path)
-    attempt_dir = tmp_path / "setup-attempts" / ATTEMPT_ID
-    request = setup_owner._request_payload(
-        ATTEMPT_ID, SCRIPT_SHA256, len(SCRIPT), 2_000_000_000_000
-    )
-    setup_owner._write_create_once(attempt_dir / "request.json", request)
-    setup_owner._write_create_once(
-        attempt_dir / "launch-receipt.json",
-        {
-            "schema_version": 1,
-            "attempt_id": ATTEMPT_ID,
-            "request_sha256": request["request_sha256"],
-            "launch_id": "launch_lost",
-            "keeper_pid": 10,
-            "keeper_creation_time": "windows:keeper",
-            "root_pid": 11,
-            "root_creation_time": "windows:root",
-            "job_name": f"Local\\blendersessiond-setup-{ATTEMPT_ID}",
-            "owned_at": "2026-09-03T00:00:00Z",
-        },
-    )
-    monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: False)
-    monkeypatch.setattr(setup_owner, "_job_exists", lambda _name: False)
-
-    first = setup_owner.status_setup(
-        state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        platform_name="Windows",
-    )
-    second = setup_owner.stop_setup(
-        state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        platform_name="Windows",
-    )
-
-    assert first == second
-    assert first["status"] == "owner_lost"
-    assert first["cleanup"] == "tree_gone"
-    assert json.loads((attempt_dir / "terminal.json").read_text()) == first
-
-
-def test_pid_reuse_is_never_terminated(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stage_script(tmp_path)
-    attempt_dir = tmp_path / "setup-attempts" / ATTEMPT_ID
-    request = setup_owner._request_payload(
-        ATTEMPT_ID, SCRIPT_SHA256, len(SCRIPT), 2_000_000_000_000
-    )
-    setup_owner._write_create_once(attempt_dir / "request.json", request)
-    setup_owner._write_create_once(
-        attempt_dir / "launch-receipt.json",
-        {
-            "schema_version": 1,
-            "attempt_id": ATTEMPT_ID,
-            "request_sha256": request["request_sha256"],
-            "launch_id": "launch_stale_pid",
-            "keeper_pid": 10,
-            "keeper_creation_time": "windows:old-keeper",
-            "root_pid": 11,
-            "root_creation_time": "windows:old-root",
-            "job_name": f"Local\\blendersessiond-setup-{ATTEMPT_ID}",
-            "owned_at": "2026-09-03T00:00:00Z",
-        },
-    )
-    monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: False)
-    monkeypatch.setattr(setup_owner, "_job_exists", lambda _name: True)
-    monkeypatch.setattr(setup_owner, "_STOP_WAIT_SECONDS", 0)
-    terminated: list[tuple[int, str]] = []
-    monkeypatch.setattr(
-        setup_owner,
-        "_terminate_exact_keeper",
-        lambda pid, identity: terminated.append((pid, identity)),
-    )
-
-    first = setup_owner.stop_setup(
-        state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        platform_name="Windows",
-    )
-    second = setup_owner.stop_setup(
-        state_root=tmp_path,
-        attempt_id=ATTEMPT_ID,
-        platform_name="Windows",
-    )
-
-    assert first == second
-    assert first["status"] == "cleanup_unverified"
-    assert first["cleanup"] == "cleanup_unverified"
-    assert terminated == []
-
-
-@pytest.mark.parametrize("attempt_id", ["", "A" * 32, "../escape", "a" * 31])
-def test_attempt_identity_is_strict(attempt_id: str, tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="Attempt ID"):
-        setup_owner.status_setup(
-            state_root=tmp_path,
-            attempt_id=attempt_id,
-            platform_name="Windows",
-        )
+    names = {path.name for path in (tmp_path / "setup-attempts" / ATTEMPT_ID).glob("*.json")}
+    assert names <= {"request.json", "launch-receipt.json", "terminal.json"}
 
 
 def test_non_windows_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(setup_owner.SetupOwnerError, match="Windows"):
-        setup_owner.status_setup(
-            state_root=tmp_path,
-            attempt_id=ATTEMPT_ID,
-            platform_name="Darwin",
-        )
+        setup_owner.status_setup(ATTEMPT_ID, state_root=tmp_path, platform_name="Darwin")
