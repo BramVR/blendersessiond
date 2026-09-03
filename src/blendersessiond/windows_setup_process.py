@@ -29,7 +29,6 @@ _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
 _WAIT_OBJECT_0 = 0
 _WAIT_TIMEOUT = 258
 _ERROR_BROKEN_PIPE = 109
-_ERROR_FILE_NOT_FOUND = 2
 _ERROR_INVALID_PARAMETER = 87
 _STILL_ACTIVE = 259
 _MAX_STREAM_BYTES = 24 * 1024
@@ -599,18 +598,6 @@ def exact_process_state(
         owner.close_handles((process,))
 
 
-def job_exists(name: str) -> bool:
-    kernel = _kernel32()
-    job = kernel.OpenJobObjectW(0x0004, False, name)
-    if not job:
-        error = ctypes.get_last_error()
-        if error == _ERROR_FILE_NOT_FOUND:
-            return False
-        raise ctypes.WinError(error)
-    kernel.CloseHandle(job)
-    return True
-
-
 def run_keeper(attempt_dir: Path) -> int:
     from blendersessiond import setup_owner
 
@@ -994,12 +981,6 @@ def _kernel32():
     kernel.WriteFile.restype = wintypes.BOOL
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
-    kernel.OpenJobObjectW.argtypes = [
-        wintypes.DWORD,
-        wintypes.BOOL,
-        wintypes.LPCWSTR,
-    ]
-    kernel.OpenJobObjectW.restype = wintypes.HANDLE
     kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel.TerminateProcess.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]

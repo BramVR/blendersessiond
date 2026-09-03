@@ -509,8 +509,9 @@ def test_pid_reuse_is_safe(tmp_path: Path, monkeypatch) -> None:
     assert result.terminal.cleanup == "cleanup_unverified"
 
 
-def test_legacy_named_job_receipt_remains_recoverable(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize("operation", ["status", "stop"])
+def test_legacy_named_job_receipt_recovery_is_unverified(
+    operation: str, tmp_path: Path, monkeypatch
 ) -> None:
     now = datetime(2026, 9, 3, 12, tzinfo=UTC)
     request = setup_owner.accept_launch_request(
@@ -531,17 +532,22 @@ def test_legacy_named_job_receipt_remains_recoverable(
     )
     setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
     monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: False)
-    monkeypatch.setattr(setup_owner, "_legacy_job_is_absent", lambda _name: True)
+    monkeypatch.setattr(setup_owner, "_STOP_WAIT_SECONDS", 0)
 
-    result = setup_owner.status_setup(
+    recover = (
+        setup_owner.status_setup
+        if operation == "status"
+        else setup_owner.stop_setup
+    )
+    result = recover(
         ATTEMPT_ID,
         expected_request_sha256=request.request_sha256,
         expected_launch_id=LAUNCH_ID,
         state_root=tmp_path,
         platform_name="Windows",
     )
-    assert result.terminal.outcome == "owner_lost"
-    assert result.terminal.cleanup == "tree_gone"
+    assert result.terminal.outcome == "cleanup_unverified"
+    assert result.terminal.cleanup == "cleanup_unverified"
 
 
 def test_owner_loss_process_query_error_remains_retryable(
@@ -673,7 +679,7 @@ def test_keeper_termination_error_remains_retryable(
         owned_at=now,
     )
     setup_owner._write_create_once(directory / "launch-receipt.json", receipt.to_dict())
-    monkeypatch.setattr(setup_owner, "process_matches", lambda *_args: True)
+    monkeypatch.setattr(setup_owner, "_process_state", lambda *_args: "matches")
     monkeypatch.setattr(setup_owner, "_STOP_WAIT_SECONDS", 0)
     from blendersessiond import windows_setup_process
 

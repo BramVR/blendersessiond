@@ -64,8 +64,10 @@ also unknown, not absence. Status reports the nonterminal,
 exact identity-fenced keeper termination, but reports the same retryable state
 if process access or termination fails; it does not make that transient failure
 immutable. Receipts from the earlier named-Job implementation remain readable
-during upgrade; only those legacy attempts may prove `tree_gone` by additionally
-proving that the exact named Job no longer exists.
+during upgrade, but recovery never treats absence of their session-local Job
+name as proof that the tree is gone. A live legacy keeper may still publish its
+own terminal after stop; owner-loss or fallback recovery reports
+`cleanup_unverified`.
 
 `windows-setup-owner-v1` is a runtime capability. Its probe creates an inert
 suspended child with the same atomic Job-list mechanism, verifies membership,

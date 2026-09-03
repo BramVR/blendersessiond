@@ -662,40 +662,19 @@ def _reconcile_after_stop(
         current = _read_view(directory, request)
         if current.terminal is not None:
             return current
-        keeper = _process_state(receipt.keeper_pid, receipt.keeper_creation_time)
-        root = _process_state(receipt.root_pid, receipt.root_creation_time)
-        if _cleanup_is_proven(receipt, keeper, root):
-            return _publish_terminal(
-                directory,
-                request,
-                SetupTerminal.owned(
-                    request=request,
-                    outcome="stopped",
-                    process="cancelled",
-                    cleanup="tree_gone",
-                    stdout=b"",
-                    stderr=b"",
-                    finished_at=datetime.now(UTC),
-                ),
-            )
         time.sleep(0.05)
     keeper = _process_state(receipt.keeper_pid, receipt.keeper_creation_time)
     root = _process_state(receipt.root_pid, receipt.root_creation_time)
     if keeper in {"matches", "unknown"} or root == "unknown":
         return _unverified_view(request, receipt)
-    cleanup = (
-        "tree_gone"
-        if _cleanup_is_proven(receipt, keeper, root)
-        else "cleanup_unverified"
-    )
     return _publish_terminal(
         directory,
         request,
         SetupTerminal.owned(
             request=request,
-            outcome="stopped" if cleanup == "tree_gone" else cleanup,
+            outcome="cleanup_unverified",
             process="cancelled",
-            cleanup=cleanup,
+            cleanup="cleanup_unverified",
             stdout=b"",
             stderr=b"",
             finished_at=datetime.now(UTC),
@@ -726,19 +705,14 @@ def _reconcile_owner_loss(
     root = _process_state(receipt.root_pid, receipt.root_creation_time)
     if root == "unknown":
         return _unverified_view(request, receipt)
-    cleanup = (
-        "tree_gone"
-        if _cleanup_is_proven(receipt, keeper, root)
-        else "cleanup_unverified"
-    )
     return _publish_terminal(
         directory,
         request,
         SetupTerminal.owned(
             request=request,
-            outcome="owner_lost" if cleanup == "tree_gone" else cleanup,
+            outcome="cleanup_unverified",
             process="owner_lost",
-            cleanup=cleanup,
+            cleanup="cleanup_unverified",
             stdout=b"",
             stderr=b"",
             finished_at=datetime.now(UTC),
@@ -1110,29 +1084,8 @@ def _unverified_view(
     )
 
 
-def _cleanup_is_proven(
-    receipt: LaunchReceipt, keeper_state: str, root_state: str
-) -> bool:
-    if not (
-        _process_is_gone(keeper_state) and _process_is_gone(root_state)
-    ):
-        return False
-    if receipt.job_name is None:
-        return False
-    return _legacy_job_is_absent(receipt.job_name)
-
-
 def _legacy_job_name(launch_id: str) -> str:
     return f"Local\\BlenderSessiond.Setup.{launch_id}"
-
-
-def _legacy_job_is_absent(name: str) -> bool:
-    from blendersessiond.windows_setup_process import job_exists
-
-    try:
-        return not job_exists(name)
-    except (OSError, RuntimeError):
-        return False
 
 
 @contextmanager
