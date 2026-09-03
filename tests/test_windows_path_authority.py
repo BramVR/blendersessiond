@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import ctypes
 import os
 import subprocess
 from pathlib import PureWindowsPath
@@ -40,6 +41,15 @@ class FakePathApi:
 
     def close_handle(self, handle: object) -> None:
         self.closed.append(handle)
+
+
+class FakeAceApi:
+    def GetAce(self, dacl, index, output) -> bool:
+        assert index == 0
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p)).contents.value = (
+            dacl + ctypes.sizeof(windows_path_authority._Acl)
+        )
+        return True
 
 
 def test_guard_holds_every_ancestor_and_rejects_reparse_points() -> None:
@@ -128,6 +138,34 @@ def test_guard_can_secure_the_nearest_existing_parent_before_creation() -> None:
         api=api,
     ):
         assert api.opened[-1] == r"C:\trusted\state"
+
+
+def test_compound_access_allowed_ace_is_rejected() -> None:
+    size = ctypes.sizeof(windows_path_authority._Acl) + ctypes.sizeof(
+        windows_path_authority._AceHeader
+    )
+    buffer = ctypes.create_string_buffer(size)
+    dacl = ctypes.addressof(buffer)
+    acl = ctypes.cast(
+        dacl, ctypes.POINTER(windows_path_authority._Acl)
+    ).contents
+    acl.ace_count = 1
+    ace = ctypes.cast(
+        dacl + ctypes.sizeof(windows_path_authority._Acl),
+        ctypes.POINTER(windows_path_authority._AceHeader),
+    ).contents
+    ace.ace_type = 4
+    ace.ace_size = ctypes.sizeof(windows_path_authority._AceHeader)
+    api = windows_path_authority._NativePathApi.__new__(
+        windows_path_authority._NativePathApi
+    )
+    api.advapi = FakeAceApi()
+
+    with pytest.raises(
+        windows_path_authority.PathAuthorityError,
+        match="unsupported access-allowed ACE",
+    ):
+        api._access_entries(dacl)
 
 
 def _harden_for_current_user(path) -> None:

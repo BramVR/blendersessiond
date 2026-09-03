@@ -11,6 +11,8 @@ import pytest
 
 from blendersessiond import setup_owner
 
+pytestmark = pytest.mark.usefixtures("bypass_setup_path_authority")
+
 ATTEMPT_ID = "bbsa_" + "A" * 43
 LAUNCH_ID = "bbsl_" + "B" * 43
 SCRIPT = b"Write-Output 'owned bytes'\n"
@@ -755,7 +757,10 @@ def test_missing_staged_script_guard_uses_domain_error(
     ],
 )
 def test_path_authority_rejection_uses_setup_owner_error(
-    error: OSError | None, tmp_path: Path, monkeypatch
+    error: OSError | None,
+    tmp_path: Path,
+    monkeypatch,
+    bypass_setup_path_authority,
 ) -> None:
     from blendersessiond import windows_path_authority
 
@@ -771,7 +776,7 @@ def test_path_authority_rejection_uses_setup_owner_error(
     monkeypatch.setattr(windows_path_authority, "guard_path", rejected)
     monkeypatch.setattr(setup_owner.os, "name", "nt")
     with pytest.raises(setup_owner.SetupOwnerError, match=str(rejection)):
-        with setup_owner._guard_setup_path(tmp_path):
+        with bypass_setup_path_authority(tmp_path):
             pass
 
 

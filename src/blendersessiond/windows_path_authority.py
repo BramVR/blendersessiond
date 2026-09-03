@@ -51,6 +51,7 @@ _WIN_CREATOR_OWNER_SID = 3
 _WIN_LOCAL_SYSTEM_SID = 22
 _WIN_BUILTIN_ADMINISTRATORS_SID = 26
 _ACCESS_ALLOWED_ACE_TYPES = {0, 5, 9, 11}
+_UNSUPPORTED_ACCESS_ALLOWED_ACE_TYPES = {4}
 _ACE_OBJECT_TYPE_PRESENT = 0x1
 _ACE_INHERITED_OBJECT_TYPE_PRESENT = 0x2
 
@@ -231,6 +232,10 @@ class _NativePathApi:
                 raise ctypes.WinError(ctypes.get_last_error())
             address = ace.value
             ace_header = ctypes.cast(address, ctypes.POINTER(_AceHeader)).contents
+            if ace_header.ace_type in _UNSUPPORTED_ACCESS_ALLOWED_ACE_TYPES:
+                raise PathAuthorityError(
+                    "Setup authority path contains an unsupported access-allowed ACE."
+                )
             if ace_header.ace_type not in _ACCESS_ALLOWED_ACE_TYPES:
                 continue
             mask = ctypes.cast(

@@ -48,8 +48,9 @@ disabled. The owner rejects a reparse point in any ancestor. The authority root
 must exist with DACL inheritance disabled. The owner also rejects a target with
 a null DACL, an untrusted owner, or write-capable allow entries—including
 inherit-only entries—for principals other than the interactive user, Local
-System, built-in Administrators, and Creator Owner. The handles remain open for
-the protected operation so an ancestor cannot be renamed underneath it.
+System, built-in Administrators, and Creator Owner. Reserved compound allow
+entries fail closed instead of being ignored. The handles remain open for the
+protected operation so an ancestor cannot be renamed underneath it.
 
 Status and stop require the complete Attempt, request-hash, and Launch fence.
 Normal stop asks the exact keeper to terminate its Job. Fallback termination

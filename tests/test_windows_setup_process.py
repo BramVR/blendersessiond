@@ -12,6 +12,8 @@ import pytest
 
 from blendersessiond import setup_owner, windows_setup_process
 
+pytestmark = pytest.mark.usefixtures("bypass_setup_path_authority")
+
 
 class FakeWin32:
     def __init__(self) -> None:
