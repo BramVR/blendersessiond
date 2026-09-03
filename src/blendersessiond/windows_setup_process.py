@@ -813,17 +813,29 @@ def _powershell_arguments(script_size: int, script_sha256: str) -> list[str]:
     ]
 
 
-def _system_powershell() -> str:
-    root = os.environ.get("SystemRoot", r"C:\Windows")
-    return str(
-        Path(root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    )
+def _system_powershell(kernel: Any | None = None) -> str:
+    native = _kernel32() if kernel is None else kernel
+    size = 260
+    while size <= 32768:
+        buffer = ctypes.create_unicode_buffer(size)
+        length = native.GetSystemDirectoryW(buffer, size)
+        if length == 0:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if length < size:
+            root = buffer.value
+            break
+        size = length + 1
+    else:
+        raise RuntimeError("Windows system directory exceeds its supported bound.")
+    return str(Path(root) / "WindowsPowerShell" / "v1.0" / "powershell.exe")
 
 
 def _kernel32():
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
     kernel.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel.GetSystemDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+    kernel.GetSystemDirectoryW.restype = wintypes.UINT
     kernel.SetInformationJobObject.argtypes = [
         wintypes.HANDLE,
         ctypes.c_int,

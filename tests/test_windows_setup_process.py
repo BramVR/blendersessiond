@@ -130,6 +130,21 @@ def test_bootstrap_reads_exact_bytes_and_decodes_strict_utf8() -> None:
     assert "a" * 64 in bootstrap
 
 
+def test_system_powershell_ignores_inherited_system_root(monkeypatch) -> None:
+    trusted = r"C:\Windows\System32"
+
+    class Kernel:
+        def GetSystemDirectoryW(self, buffer, size: int) -> int:
+            assert size > len(trusted)
+            buffer.value = trusted
+            return len(trusted)
+
+    monkeypatch.setenv("SystemRoot", r"C:\attacker")
+    assert windows_setup_process._system_powershell(Kernel()) == str(
+        Path(trusted) / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    )
+
+
 def test_stdin_writer_keeps_the_owned_handle_when_the_field_is_cleared(
     monkeypatch,
 ) -> None:
