@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "website");
 const output = path.join(root, "dist", "site");
-const hero = path.join(root, "docs", "assets", "blendersessiond-header.png");
+const hero = path.join(root, "docs", "assets", "blendersessiond-hero-v2.png");
 const concept = path.join(root, "docs", "assets", "website-concept.png");
 
 fs.rmSync(output, { recursive: true, force: true });

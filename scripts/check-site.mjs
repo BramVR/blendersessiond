@@ -20,7 +20,7 @@ const requiredFiles = [
   "site.webmanifest",
   ".nojekyll",
   "assets/favicon.svg",
-  "assets/blendersessiond-header.png",
+  "assets/blendersessiond-hero-v2.png",
 ];
 
 for (const relative of requiredFiles) {

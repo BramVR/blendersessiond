@@ -7,6 +7,7 @@ on:
     paths:
       - "website/**"
       - "docs/assets/blendersessiond-header.png"
+      - "docs/assets/blendersessiond-hero-v2.png"
       - "docs/assets/website-concept.png"
       - "scripts/build-site.mjs"
       - "scripts/check-site.mjs"
