@@ -4,22 +4,19 @@ Releases use a stable SemVer tag, PyPI Trusted Publishing, and GitHub Actions.
 The tag is the only publish trigger. Manual runs build and validate artifacts
 without publishing them.
 
-## One-time PyPI setup
+## PyPI Trusted Publisher
 
-The `blendersessiond` name is currently available on PyPI. Before pushing the
-first release tag:
+The `blendersessiond` PyPI project trusts this GitHub publisher:
 
-1. In the GitHub repository, create an environment named `pypi`. Add required
-   reviewers if release approval should be manual.
-2. In the PyPI account's **Publishing** page, add a pending GitHub publisher:
-   - PyPI project name: `blendersessiond`
-   - Owner: `BramVR`
-   - Repository: `blendersessiond`
-   - Workflow: `release.yml`
-   - Environment: `pypi`
+- Owner: `BramVR`
+- Repository: `blendersessiond`
+- Workflow: `release.yml`
+- Environment: `pypi`
 
-No API token or GitHub secret is needed. The first successful publish converts
-the pending publisher into the project's normal Trusted Publisher.
+The release job runs in the `pypi` GitHub environment and publishes through
+OIDC. No API token or GitHub secret is needed. If you rename the workflow or
+the environment, update the publisher on the project's PyPI **Publishing**
+page before you push the next tag.
 
 ## Prepare a release
 

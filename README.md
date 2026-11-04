@@ -36,9 +36,10 @@ It supports macOS, Windows, and Linux with Python 3.11 or newer.
 
 blendersessiond is GUI-only and same-machine: the CLI and Blender Session run
 on the same machine, and blendersessiond has no remote control plane or
-headless mode. The real-Blender smoke workflow currently validates Blender
-5.2.0 on all three platforms; macOS and Windows GUI runs are best-effort in
-hosted CI. See the [compatibility record](https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md) for the exact Blender,
+headless mode. The real-Blender smoke workflow validates Blender 5.2.0 on
+Ubuntu as a required check and on macOS as a best-effort check. It has no
+Windows leg, because hosted Windows runners cannot create Blender's OpenGL
+context. See the [compatibility record](https://github.com/BramVR/blendersessiond/blob/main/docs/compat.md) for the exact Blender,
 addon, and MCP server pins.
 
 The addon is vendored from
